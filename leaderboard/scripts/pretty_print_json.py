@@ -60,7 +60,7 @@ def prettify_json(args):
         total_duration_system = 0
         total_route_length = 0
         for route in records_table:
-            route_completed_kms = 0.01 * route['scores']['score_route'] * route['meta']['route_length'] / 1000.0
+            route_completed_kms = 0.01 * route['scores']['score_route'] * route['meta']['route_length'] / 1000.0 + 1e-5
             metrics_route = [[key, '{:.3f}'.format(values), ''] for key, values in route['scores'].items()]
             infractions_route = [[key, '{:.3f} ({} occurrences)'.format(len(values)/route_completed_kms, len(values)),
                                  '\n'.join(values)] for key, values in route['infractions'].items()]

@@ -1,6 +1,6 @@
 #!/bin/bash
 
-export CARLA_ROOT=carla
+export CARLA_ROOT=/home/gyp/program/carla
 export CARLA_SERVER=${CARLA_ROOT}/CarlaUE4.sh
 export PYTHONPATH=$PYTHONPATH:${CARLA_ROOT}/PythonAPI
 export PYTHONPATH=$PYTHONPATH:${CARLA_ROOT}/PythonAPI/carla
@@ -15,11 +15,11 @@ export PORT=2000 # same as the carla server port
 export TM_PORT=8000 # port for traffic manager, required when spawning multiple servers/clients
 export DEBUG_CHALLENGE=0
 export REPETITIONS=1 # multiple evaluation runs
-export ROUTES=leaderboard/data/validation_routes/routes_town05_short.xml
-export TEAM_AGENT=leaderboard/team_code/auto_pilot.py # agent
-export TEAM_CONFIG=aim/log/aim_ckpt # model checkpoint, not required for expert
-export CHECKPOINT_ENDPOINT=results/sample_result.json # results file
-export SCENARIOS=leaderboard/data/scenarios/no_scenarios.json
+export ROUTES=leaderboard/data/evaluation_routes/routes_town05_long.xml
+export TEAM_AGENT=leaderboard/team_code/transfuser_agent.py # agent
+export TEAM_CONFIG=/home/gyp/program/transfuser/model_ckpt/2021/transfuser # model checkpoint, not required for expert
+export CHECKPOINT_ENDPOINT=result.json # results file
+export SCENARIOS=leaderboard/data/scenarios/town05_all_scenarios.json
 export SAVE_PATH=data/expert # path for saving episodes while evaluating
 export RESUME=True
 

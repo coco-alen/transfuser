@@ -14,6 +14,7 @@ torch.backends.cudnn.benchmark = True
 from config import GlobalConfig
 from model import TransFuser
 from data import CARLA_Data
+from utils import load_weight
 
 torch.cuda.empty_cache()
 
@@ -22,9 +23,10 @@ parser.add_argument('--id', type=str, default='transfuser', help='Unique experim
 parser.add_argument('--device', type=str, default='cuda', help='Device to use')
 parser.add_argument('--epochs', type=int, default=101, help='Number of train epochs.')
 parser.add_argument('--lr', type=float, default=1e-4, help='Learning rate.')
-parser.add_argument('--val_every', type=int, default=5, help='Validation frequency (epochs).')
+parser.add_argument('--val_every', type=int, default=1, help='Validation frequency (epochs).')
 parser.add_argument('--batch_size', type=int, default=24, help='Batch size')
 parser.add_argument('--logdir', type=str, default='log', help='Directory to log data to.')
+parser.add_argument('--load_weight', type=str, default=None, help='Directory to load pretrained weight.')
 
 args = parser.parse_args()
 args.logdir = os.path.join(args.logdir, args.id)
@@ -52,7 +54,7 @@ class Engine(object):
 	def train(self):
 		loss_epoch = 0.
 		num_batches = 0
-		model.train()
+		# model.train()
 
 		# Train loop
 		for data in tqdm(dataloader_train):
@@ -111,7 +113,7 @@ class Engine(object):
 		self.cur_epoch += 1
 
 	def validate(self):
-		model.eval()
+		# model.eval()
 
 		with torch.no_grad():	
 			num_batches = 0
@@ -213,6 +215,8 @@ dataloader_val = DataLoader(val_set, batch_size=args.batch_size, shuffle=False, 
 
 # Model
 model = TransFuser(config, args.device)
+if args.load_weight is not None:
+	load_weight(model, args.load_weight)
 optimizer = optim.AdamW(model.parameters(), lr=args.lr)
 trainer = Engine()
 
@@ -243,6 +247,13 @@ elif os.path.isfile(os.path.join(args.logdir, 'recent.log')):
 # Log args
 with open(os.path.join(args.logdir, 'args.txt'), 'w') as f:
 	json.dump(args.__dict__, f, indent=2)
+	f.write('\n\n=======================\n\n')
+	f.write(str(model))
+	f.write('\n\n=======================\n\n')
+	params = dir(config)
+	for param in params:
+		if "__" not in param:
+			f.write(f"{param}:  {getattr(config, param)}\n")
 
 for epoch in range(trainer.cur_epoch, args.epochs): 
 	trainer.train()

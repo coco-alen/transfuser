@@ -6,7 +6,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 from torchvision import models
-
+from resnet import resnet18, resnet34, resnet50
 
 class ImageCNN(nn.Module):
     """ 
@@ -19,7 +19,7 @@ class ImageCNN(nn.Module):
     def __init__(self, c_dim, normalize=True):
         super().__init__()
         self.normalize = normalize
-        self.features = models.resnet34(pretrained=True)
+        self.features = resnet34(pretrained=True)
         self.features.fc = nn.Sequential()
 
     def forward(self, inputs):
@@ -53,7 +53,7 @@ class LidarEncoder(nn.Module):
     def __init__(self, num_classes=512, in_channels=2):
         super().__init__()
 
-        self._model = models.resnet18()
+        self._model = resnet18()
         self._model.fc = nn.Sequential()
         _tmp = self._model.conv1
         self._model.conv1 = nn.Conv2d(in_channels, out_channels=_tmp.out_channels, 
@@ -101,6 +101,52 @@ class SelfAttention(nn.Module):
         att = self.attn_drop(att)
         y = att @ v # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
         y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
+
+        # output projection
+        y = self.resid_drop(self.proj(y))
+        return y
+
+
+class CrossAttention(nn.Module):
+    """
+    A vanilla multi-head masked cross-attention layer with a projection at the end.
+    """
+
+    def __init__(self, n_embd, n_head, attn_pdrop, resid_pdrop):
+        super().__init__()
+        assert n_embd % n_head == 0
+        # key, query, value projections for all heads
+        self.key = nn.Linear(n_embd, n_embd)
+        self.query = nn.Linear(n_embd, n_embd)
+        self.value = nn.Linear(n_embd, n_embd)
+        # regularization
+        self.attn_drop = nn.Dropout(attn_pdrop)
+        self.resid_drop = nn.Dropout(resid_pdrop)
+        # output projection
+        self.proj = nn.Linear(n_embd, n_embd)
+        self.n_head = n_head
+
+    def forward(self, query, key, value, mask=None):
+        assert query.size(0) == key.size(0) == value.size(0), 'Batch_size dimension of query, key, value must be the same'
+        assert query.size(2) == key.size(2) == value.size(0), 'Feature length dimension of query, key, value must be the same'
+        assert key.size(1) == value.size(1), 'SeqLen dimension of key, value must be the same'
+        B, T_q, C = query.size()
+        B, T_k, C = key.size()
+
+
+        # calculate query, key, values for all heads in batch and move head forward to be the batch dim
+        k = self.key(key).view(B, T_k, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+        q = self.query(query).view(B, T_q, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+        v = self.value(value).view(B, T_k, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+
+        # self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
+        att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
+        if mask is not None:
+            att = torch.masked_fill(att, mask == 0, -1e9)
+        att = F.softmax(att, dim=-1)
+        att = self.attn_drop(att)
+        y = att @ v # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
+        y = y.transpose(1, 2).contiguous().view(B, T_q, C) # re-assemble all head outputs side by side
 
         # output projection
         y = self.resid_drop(self.proj(y))
