@@ -130,3 +130,5 @@ dmypy.json
 
 model_ckpt
 log
+*.jpg
+*.png

@@ -28,9 +28,7 @@ class GlobalConfig:
     n_views = 1 # no. of camera views
 
     input_resolution = 256
-
     scale = 1 # image pre-processing
-    crop = 256 # image pre-processing
 
     lr = 1e-4 # learning rate
 

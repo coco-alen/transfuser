@@ -54,10 +54,11 @@ class Engine(object):
 	def train(self):
 		loss_epoch = 0.
 		num_batches = 0
+		loss = 0.
 		# model.train()
 
 		# Train loop
-		for data in tqdm(dataloader_train):
+		for data in tqdm(dataloader_train, desc=f'Train epoch {self.cur_epoch}, loss: {loss}'):
 			
 			# efficiently zero gradients
 			for p in model.parameters():

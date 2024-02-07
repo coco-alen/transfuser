@@ -198,6 +198,8 @@ class CARLA_Data(Dataset):
         for i in range(self.seq_len):
             data['fronts'].append(torch.from_numpy(np.array(
                 scale_and_crop_image(Image.open(seq_fronts[i]), scale=self.scale, crop=self.input_resolution))))
+            data['fronts'].append(torch.from_numpy(np.array(
+                scale_and_crop_image(Image.open(seq_fronts[i]), scale=0.35, crop=self.input_resolution))))
             if not self.ignore_sides:
                 data['lefts'].append(torch.from_numpy(np.array(
                     scale_and_crop_image(Image.open(seq_lefts[i]), scale=self.scale, crop=self.input_resolution))))

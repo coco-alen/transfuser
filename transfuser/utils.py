@@ -32,7 +32,7 @@ def load_weight(model:nn.Module, weight_dir:str, strict = True) -> nn.Module:
     unused_params = []
     for name, param in model.named_parameters():
         if name in state_dict:
-            param.requires_grad = False
+            # param.requires_grad = False
             unused_keys.remove(name)
         else:
             unused_params.append(name)
