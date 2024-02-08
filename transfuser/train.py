@@ -58,55 +58,56 @@ class Engine(object):
 		# model.train()
 
 		# Train loop
-		for data in tqdm(dataloader_train):
-			# efficiently zero gradients
-			for p in model.parameters():
-				p.grad = None
-			
-			# create batch and move to GPU
-			fronts_in = data['fronts']
-			lefts_in = data['lefts']
-			rights_in = data['rights']
-			rears_in = data['rears']
-			lidars_in = data['lidars']
-			fronts = []
-			lefts = []
-			rights = []
-			rears = []
-			lidars = []
-			for i in range(config.seq_len):
-				fronts.append(fronts_in[i].to(args.device, dtype=torch.float32))
-				if not config.ignore_sides:
-					lefts.append(lefts_in[i].to(args.device, dtype=torch.float32))
-					rights.append(rights_in[i].to(args.device, dtype=torch.float32))
-				if not config.ignore_rear:
-					rears.append(rears_in[i].to(args.device, dtype=torch.float32))
-				lidars.append(lidars_in[i].to(args.device, dtype=torch.float32))
+		with tqdm(dataloader_train, desc='Train') as tbar:
+			for data in tbar:
+				# efficiently zero gradients
+				for p in model.parameters():
+					p.grad = None
+				
+				# create batch and move to GPU
+				fronts_in = data['fronts']
+				lefts_in = data['lefts']
+				rights_in = data['rights']
+				rears_in = data['rears']
+				lidars_in = data['lidars']
+				fronts = []
+				lefts = []
+				rights = []
+				rears = []
+				lidars = []
+				for i in range(config.seq_len):
+					fronts.append(fronts_in[i].to(args.device, dtype=torch.float32))
+					if not config.ignore_sides:
+						lefts.append(lefts_in[i].to(args.device, dtype=torch.float32))
+						rights.append(rights_in[i].to(args.device, dtype=torch.float32))
+					if not config.ignore_rear:
+						rears.append(rears_in[i].to(args.device, dtype=torch.float32))
+					lidars.append(lidars_in[i].to(args.device, dtype=torch.float32))
 
-			# driving labels
-			command = data['command'].to(args.device)
-			gt_velocity = data['velocity'].to(args.device, dtype=torch.float32)
-			gt_steer = data['steer'].to(args.device, dtype=torch.float32)
-			gt_throttle = data['throttle'].to(args.device, dtype=torch.float32)
-			gt_brake = data['brake'].to(args.device, dtype=torch.float32)
+				# driving labels
+				command = data['command'].to(args.device)
+				gt_velocity = data['velocity'].to(args.device, dtype=torch.float32)
+				gt_steer = data['steer'].to(args.device, dtype=torch.float32)
+				gt_throttle = data['throttle'].to(args.device, dtype=torch.float32)
+				gt_brake = data['brake'].to(args.device, dtype=torch.float32)
 
-			# target point
-			target_point = torch.stack(data['target_point'], dim=1).to(args.device, dtype=torch.float32)
-			
-			pred_wp = model(fronts+lefts+rights+rears, lidars, target_point, gt_velocity)
-			
-			gt_waypoints = [torch.stack(data['waypoints'][i], dim=1).to(args.device, dtype=torch.float32) for i in range(config.seq_len, len(data['waypoints']))]
-			gt_waypoints = torch.stack(gt_waypoints, dim=1).to(args.device, dtype=torch.float32)
-			loss = F.l1_loss(pred_wp, gt_waypoints, reduction='none').mean()
-			loss.backward()
-			loss_epoch += float(loss.item())
+				# target point
+				target_point = torch.stack(data['target_point'], dim=1).to(args.device, dtype=torch.float32)
+				
+				pred_wp = model(fronts+lefts+rights+rears, lidars, target_point, gt_velocity)
+				
+				gt_waypoints = [torch.stack(data['waypoints'][i], dim=1).to(args.device, dtype=torch.float32) for i in range(config.seq_len, len(data['waypoints']))]
+				gt_waypoints = torch.stack(gt_waypoints, dim=1).to(args.device, dtype=torch.float32)
+				loss = F.l1_loss(pred_wp, gt_waypoints, reduction='none').mean()
+				loss.backward()
+				loss_epoch += float(loss.item())
 
-			num_batches += 1
-			optimizer.step()
-			tqdm.set_postfix({"loss": loss.item(), "iters": self.cur_iter})
-			writer.add_scalar('train_loss', loss.item(), self.cur_iter)
-			self.cur_iter += 1
-		
+				num_batches += 1
+				optimizer.step()
+				tqdm.set_postfix(tbar, {"loss" : loss.item(), "iters" :self.cur_iter})
+				writer.add_scalar('train_loss', loss.item(), self.cur_iter)
+				self.cur_iter += 1
+			
 		
 		loss_epoch = loss_epoch / num_batches
 		self.train_loss.append(loss_epoch)

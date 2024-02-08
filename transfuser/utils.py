@@ -5,6 +5,9 @@ def load_weight(model:nn.Module, weight_dir:str, strict = True) -> nn.Module:
     current_state_dict = model.state_dict()
     state_dict = torch.load(weight_dir)
     for key in state_dict:
+        if key not in list(current_state_dict.keys()):
+            continue
+
         if current_state_dict[key].shape != state_dict[key].shape:
             if strict:
                 raise ValueError(
