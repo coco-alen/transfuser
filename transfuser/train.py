@@ -58,8 +58,7 @@ class Engine(object):
 		# model.train()
 
 		# Train loop
-		for data in tqdm(dataloader_train, desc=f'Train epoch {self.cur_epoch}, loss: {loss}'):
-			
+		for data in tqdm(dataloader_train):
 			# efficiently zero gradients
 			for p in model.parameters():
 				p.grad = None
@@ -104,7 +103,7 @@ class Engine(object):
 
 			num_batches += 1
 			optimizer.step()
-
+			tqdm.set_postfix({"loss": loss.item(), "iters": self.cur_iter})
 			writer.add_scalar('train_loss', loss.item(), self.cur_iter)
 			self.cur_iter += 1
 		
@@ -187,7 +186,7 @@ class Engine(object):
 		}
 
 		# Save ckpt for every epoch
-		torch.save(model.state_dict(), os.path.join(args.logdir, 'model_%d.pth'%self.cur_epoch))
+		# torch.save(model.state_dict(), os.path.join(args.logdir, 'model_%d.pth'%self.cur_epoch))
 
 		# Save the recent model/optimizer states
 		torch.save(model.state_dict(), os.path.join(args.logdir, 'model.pth'))
@@ -217,7 +216,7 @@ dataloader_val = DataLoader(val_set, batch_size=args.batch_size, shuffle=False, 
 # Model
 model = TransFuser(config, args.device)
 if args.load_weight is not None:
-	load_weight(model, args.load_weight)
+	load_weight(model, args.load_weight, strict=False)
 optimizer = optim.AdamW(model.parameters(), lr=args.lr)
 trainer = Engine()
 
