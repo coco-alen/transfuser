@@ -198,16 +198,16 @@ class CARLA_Data(Dataset):
         for i in range(self.seq_len):
             data['fronts'].append(torch.from_numpy(np.array(
                 scale_and_crop_image(Image.open(seq_fronts[i]), scale=self.scale, crop=self.input_resolution))))
-            data['fronts'].append(torch.from_numpy(np.array(
-                scale_and_crop_image(Image.open(seq_fronts[i]), scale=0.35, crop=self.input_resolution))))
             if not self.ignore_sides:
                 data['lefts'].append(torch.from_numpy(np.array(
                     scale_and_crop_image(Image.open(seq_lefts[i]), scale=self.scale, crop=self.input_resolution))))
                 data['rights'].append(torch.from_numpy(np.array(
                     scale_and_crop_image(Image.open(seq_rights[i]), scale=self.scale, crop=self.input_resolution))))
             if not self.ignore_rear:
+                # data['rears'].append(torch.from_numpy(np.array(
+                #     scale_and_crop_image(Image.open(seq_rears[i]), scale=self.scale, crop=self.input_resolution))))
                 data['rears'].append(torch.from_numpy(np.array(
-                    scale_and_crop_image(Image.open(seq_rears[i]), scale=self.scale, crop=self.input_resolution))))
+                    scale_and_crop_image(Image.open(seq_fronts[i]), scale=0.35, crop=self.input_resolution))))
             
             lidar_unprocessed = np.load(seq_lidars[i])[...,:3] # lidar: XYZI
             full_lidar.append(lidar_unprocessed)

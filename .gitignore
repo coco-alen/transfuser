@@ -132,3 +132,4 @@ model_ckpt
 log
 *.jpg
 *.png
+/data

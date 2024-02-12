@@ -14,11 +14,12 @@ from config import GlobalConfig
 from model import TransFuser
 from data import CARLA_Data
 from utils import load_weight
+os.environ["CUDA_VISIBLE_DEVICES"] = '1'
 torch.cuda.empty_cache()
 
 #  ===  hyperparameters  === 
 BATCH_SIZE = 64
-PTH_PATH = '/home/yipin/program/transfuser/model_ckpt/2021/transfuser/best_model.pth'
+PTH_PATH = '/home/gyp/program/my_transfuser/transfuser/transfuser/log/transfuser_focusview/best_model.pth'
 DEV = "cuda"
 REPEAT = 1000
 #  ========================= 

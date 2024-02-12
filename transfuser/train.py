@@ -15,7 +15,7 @@ from config import GlobalConfig
 from model import TransFuser
 from data import CARLA_Data
 from utils import load_weight
-
+os.environ["CUDA_VISIBLE_DEVICES"] = '0'
 torch.cuda.empty_cache()
 
 parser = argparse.ArgumentParser()
