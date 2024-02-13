@@ -6,7 +6,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 from torchvision import models
-from resnet import resnet18, resnet34, resnet50
+from .resnet import resnet18, resnet34, resnet50
 
 class ImageCNN(nn.Module):
     """ 
