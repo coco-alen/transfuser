@@ -245,16 +245,16 @@ class Block(nn.Module):
         super().__init__()
         self.ln1 = nn.LayerNorm(n_embd)
         self.ln2 = nn.LayerNorm(n_embd)
-        # self.attn = SelfAttention(n_embd, n_head, attn_pdrop, resid_pdrop)
-        self.attn = LinAngularAttention(in_dim=n_embd,
-                                        d_k=n_embd // n_head,
-                                        d_v=n_embd // n_head,
-                                        num_heads=n_head,
-                                        qkv_bias=True,
-                                        attn_drop=attn_pdrop,
-                                        proj_drop=resid_pdrop,
-                                        res_kernel_size=9,
-                                        sparse_reg=False)
+        self.attn = SelfAttention(n_embd, n_head, attn_pdrop, resid_pdrop)
+        # self.attn = LinAngularAttention(in_dim=n_embd,
+        #                                 d_k=n_embd // n_head,
+        #                                 d_v=n_embd // n_head,
+        #                                 num_heads=n_head,
+        #                                 qkv_bias=True,
+        #                                 attn_drop=attn_pdrop,
+        #                                 proj_drop=resid_pdrop,
+        #                                 res_kernel_size=9,
+        #                                 sparse_reg=False)
         self.mlp = nn.Sequential(
             nn.Linear(n_embd, block_exp * n_embd),
             nn.ReLU(True), # changed from GELU
