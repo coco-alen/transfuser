@@ -153,6 +153,91 @@ class CrossAttention(nn.Module):
         return y
 
 
+class LinAngularAttention(nn.Module):
+    def __init__(
+        self,
+        in_dim,
+        d_k,
+        d_v,
+        num_heads=8,
+        qkv_bias=False,
+        attn_drop=0.0,
+        proj_drop=0.0,
+        res_kernel_size=9,
+        sparse_reg=False,
+    ):
+        super().__init__()
+        assert in_dim % num_heads == 0, "dim should be divisible by num_heads"
+        self.num_heads = num_heads
+
+        self.d_k = d_k
+        self.d_v = d_v
+
+        self.scale = d_k**-0.5
+        self.sparse_reg = sparse_reg
+
+        self.w_qs = nn.Linear(in_dim, num_heads * d_k, bias=qkv_bias)
+        self.w_ks = nn.Linear(in_dim, num_heads * d_k, bias=qkv_bias)
+        self.w_vs = nn.Linear(in_dim, num_heads * d_v, bias=qkv_bias)
+
+        self.attn_drop = nn.Dropout(attn_drop)
+        self.proj = nn.Linear(in_dim, in_dim)
+        self.proj_drop = nn.Dropout(proj_drop)
+
+        self.dconv = nn.Conv2d(
+            in_channels=self.num_heads,
+            out_channels=self.num_heads,
+            kernel_size=(res_kernel_size, 1),
+            padding=(res_kernel_size // 2, 0),
+            bias=False,
+            groups=self.num_heads,
+        )
+
+    # def forward(self, q, k, v, mask=None):
+    def forward(self, x):    
+        mask = None
+        q = k = v = x
+
+        assert q.shape == k.shape and k.shape == v.shape, "input shape must be equal"
+        N, L, C = q.shape
+
+        d_k, d_v, n_head = self.d_k, self.d_v, self.num_heads
+        sz_b, len_q, len_k, len_v = q.size(0), q.size(1), k.size(1), v.size(1)
+
+        # Pass through the pre-attention projection: b x lq x (n*dv)
+        # Separate different heads: b x lq x n x dv
+        q = self.w_qs(q).view(sz_b, n_head, len_q, d_k)
+        k = self.w_ks(k).view(sz_b, n_head, len_k, d_k)
+        v = self.w_vs(v).view(sz_b, n_head, len_v, d_v)
+
+        if self.sparse_reg:
+            attn = torch.matmul(q * self.scale, k.transpose(-2, -1))
+            attn = attn.softmax(dim=-1)
+            mask = attn > 0.02 # note that the threshold could be different; adapt to your codebases.
+            sparse = mask * attn
+
+        q = q / q.norm(dim=-1, keepdim=True)
+        k = k / k.norm(dim=-1, keepdim=True)
+        dconv_v = self.dconv(v)
+
+        attn = torch.matmul(k.transpose(-2, -1), v)
+
+        if self.sparse_reg:
+            x = (
+                torch.matmul(sparse, v)
+                + 0.5 * v
+                + 1.0 / math.pi * torch.matmul(q, attn)
+            )
+        else:
+            x = 0.5 * v + 1.0 / math.pi * torch.matmul(q, attn)
+        x = x / x.norm(dim=-1, keepdim=True)
+        x += dconv_v
+        x = x.transpose(1, 2).reshape(N, L, C)
+        x = self.proj(x)
+        x = self.proj_drop(x)
+        return x
+
+
 class Block(nn.Module):
     """ an unassuming Transformer block """
 
@@ -161,6 +246,15 @@ class Block(nn.Module):
         self.ln1 = nn.LayerNorm(n_embd)
         self.ln2 = nn.LayerNorm(n_embd)
         self.attn = SelfAttention(n_embd, n_head, attn_pdrop, resid_pdrop)
+        # self.attn = LinAngularAttention(in_dim=n_embd,
+        #                                 d_k=n_embd // n_head,
+        #                                 d_v=n_embd // n_head,
+        #                                 num_heads=n_head,
+        #                                 qkv_bias=True,
+        #                                 attn_drop=attn_pdrop,
+        #                                 proj_drop=resid_pdrop,
+        #                                 res_kernel_size=9,
+        #                                 sparse_reg=False)
         self.mlp = nn.Sequential(
             nn.Linear(n_embd, block_exp * n_embd),
             nn.ReLU(True), # changed from GELU
