@@ -6,7 +6,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 from torchvision import models
-from .resnet import resnet18, resnet34, resnet50
+from resnet import resnet18, resnet34, resnet50
 
 class ImageCNN(nn.Module):
     """ 
@@ -176,9 +176,9 @@ class LinAngularAttention(nn.Module):
         self.scale = d_k**-0.5
         self.sparse_reg = sparse_reg
 
-        self.w_qs = nn.Linear(in_dim, num_heads * d_k, bias=qkv_bias)
-        self.w_ks = nn.Linear(in_dim, num_heads * d_k, bias=qkv_bias)
-        self.w_vs = nn.Linear(in_dim, num_heads * d_v, bias=qkv_bias)
+        self.query = nn.Linear(in_dim, num_heads * d_k, bias=qkv_bias)
+        self.key = nn.Linear(in_dim, num_heads * d_k, bias=qkv_bias)
+        self.value = nn.Linear(in_dim, num_heads * d_v, bias=qkv_bias)
 
         self.attn_drop = nn.Dropout(attn_drop)
         self.proj = nn.Linear(in_dim, in_dim)
@@ -206,9 +206,9 @@ class LinAngularAttention(nn.Module):
 
         # Pass through the pre-attention projection: b x lq x (n*dv)
         # Separate different heads: b x lq x n x dv
-        q = self.w_qs(q).view(sz_b, n_head, len_q, d_k)
-        k = self.w_ks(k).view(sz_b, n_head, len_k, d_k)
-        v = self.w_vs(v).view(sz_b, n_head, len_v, d_v)
+        q = self.query(q).view(sz_b, n_head, len_q, d_k)
+        k = self.key(k).view(sz_b, n_head, len_k, d_k)
+        v = self.value(v).view(sz_b, n_head, len_v, d_v)
 
         if self.sparse_reg:
             attn = torch.matmul(q * self.scale, k.transpose(-2, -1))
@@ -245,16 +245,16 @@ class Block(nn.Module):
         super().__init__()
         self.ln1 = nn.LayerNorm(n_embd)
         self.ln2 = nn.LayerNorm(n_embd)
-        self.attn = SelfAttention(n_embd, n_head, attn_pdrop, resid_pdrop)
-        # self.attn = LinAngularAttention(in_dim=n_embd,
-        #                                 d_k=n_embd // n_head,
-        #                                 d_v=n_embd // n_head,
-        #                                 num_heads=n_head,
-        #                                 qkv_bias=True,
-        #                                 attn_drop=attn_pdrop,
-        #                                 proj_drop=resid_pdrop,
-        #                                 res_kernel_size=9,
-        #                                 sparse_reg=False)
+        # self.attn = SelfAttention(n_embd, n_head, attn_pdrop, resid_pdrop)
+        self.attn = LinAngularAttention(in_dim=n_embd,
+                                        d_k=n_embd // n_head,
+                                        d_v=n_embd // n_head,
+                                        num_heads=n_head,
+                                        qkv_bias=True,
+                                        attn_drop=attn_pdrop,
+                                        proj_drop=resid_pdrop,
+                                        res_kernel_size=9,
+                                        sparse_reg=False)
         self.mlp = nn.Sequential(
             nn.Linear(n_embd, block_exp * n_embd),
             nn.ReLU(True), # changed from GELU
