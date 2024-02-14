@@ -216,7 +216,8 @@ dataloader_val = DataLoader(val_set, batch_size=args.batch_size, shuffle=False, 
 # Model
 model = VitFuser(config, args.device)
 if args.load_weight is not None:
-	load_weight(model, args.load_weight, strict=False)
+	state_dict = torch.load(args.load_weight)
+	load_weight(model, state_dict, strict=False)
 optimizer = optim.AdamW(model.parameters(), lr=args.lr)
 trainer = Engine()
 

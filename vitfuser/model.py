@@ -4,106 +4,155 @@ from collections import deque
 import numpy as np
 import torch
 import torch.nn as nn
-
-from pvt import OverlapPatchEmbed, Block, CrossAttention
+import torch.nn.functional as F
 
 from thop import profile
 from thop import clever_format
 
-class pvt_layer(nn.Module):
-    def __init__(self, 
-                 img_size: int,
-                 patch_in_chans: int,
-                 embed_dims,
-                 stage_idx: int,
-                 drop_path_rate: list,
-                 cross: bool = False,
-                 cross_patch_chans: int = 0,
-                 num_heads: int = 4,
-                 mlp_ratios: int = 4,
-                 depths: int = 2,
-                 sr_ratios: int = 8,
-                 qkv_bias=False, qk_scale=None, drop_rate=0., 
-                 attn_drop_rate=0., norm_layer=nn.LayerNorm, linear=False):
+from efficientvit import EfficientViT, EfficientViT_m0, EfficientViT_m1, EfficientViT_m2, EfficientViT_m3, replace_batchnorm
+from utils import load_weight
 
-        super(pvt_layer, self).__init__()
+torch.autograd.set_detect_anomaly(True)
 
-        self.patch_embed = OverlapPatchEmbed(img_size=img_size if stage_idx == 0 else img_size // (2 ** (stage_idx + 1)),
-                                        patch_size=7 if stage_idx == 0 else 3,
-                                        stride=4 if stage_idx == 0 else 2,
-                                        in_chans=patch_in_chans,
-                                        embed_dim=embed_dims)
-        self.cross = cross
-        if self.cross == True:
-            # self.cross_patch = OverlapPatchEmbed(img_size=img_size if stage_idx == 0 else img_size // (2 ** (stage_idx + 1)),
-            #                             patch_size=7 if stage_idx == 0 else 3,
-            #                             stride=4 if stage_idx == 0 else 2,
-            #                             in_chans=cross_patch_chans,
-            #                             embed_dim=embed_dims)
-            self.cross_attn = CrossAttention(
-                n_embd=embed_dims,
-                n_head=num_heads,
-                attn_pdrop=attn_drop_rate,
-                resid_pdrop=drop_rate,
-            )
-            self.vel_emb = nn.Linear(1, embed_dims)
+class SelfAttention(nn.Module):
+    """
+    A vanilla multi-head masked self-attention layer with a projection at the end.
+    """
 
-        self.block = nn.ModuleList([Block(
-            dim=embed_dims, num_heads=num_heads, mlp_ratio=mlp_ratios, qkv_bias=qkv_bias, qk_scale=qk_scale,
-            drop=drop_rate, attn_drop=attn_drop_rate, drop_path=drop_path_rate[j], norm_layer=norm_layer,
-            sr_ratio=sr_ratios, linear=linear)
-            for j in range(depths)])
-        self.norm = norm_layer(embed_dims)
+    def __init__(self, n_embd, n_head, attn_pdrop, resid_pdrop):
+        super().__init__()
+        assert n_embd % n_head == 0
+        # key, query, value projections for all heads
+        self.key = nn.Linear(n_embd, n_embd)
+        self.query = nn.Linear(n_embd, n_embd)
+        self.value = nn.Linear(n_embd, n_embd)
+        # regularization
+        self.attn_drop = nn.Dropout(attn_pdrop)
+        self.resid_drop = nn.Dropout(resid_pdrop)
+        # output projection
+        self.proj = nn.Linear(n_embd, n_embd)
+        self.n_head = n_head
 
-    def forward(self, kv, q, velocity):
-        B = kv.shape[0]
-        x, H, W = self.patch_embed(kv)
-        if self.cross == True:
-            q, H_, W_ = self.patch_embed(q)
-            # q, H_, W_ = self.cross_patch(q)
-            velc = self.vel_emb(velocity.unsqueeze(1)).unsqueeze(1)
-            q = q + velc
-            assert H == H_ and W == W_, "kv and q must have the same spatial resolution!"
-            x = self.cross_attn(q, x, x)
+    def forward(self, x):
+        B, T, C = x.size()
 
-        for blk in self.block:
-            x = blk(x, H, W)
-        x = self.norm(x)
-        x = x.reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous()
+        # calculate query, key, values for all heads in batch and move head forward to be the batch dim
+        k = self.key(x).view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+        q = self.query(x).view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+        v = self.value(x).view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+
+        # self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
+        att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
+        att = F.softmax(att, dim=-1)
+        att = self.attn_drop(att)
+        y = att @ v # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
+        y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
+
+        # output projection
+        y = self.resid_drop(self.proj(y))
+        return y
+
+class CrossAttention(nn.Module):
+    """
+    A vanilla multi-head masked cross-attention layer with a projection at the end.
+    """
+
+    def __init__(self, n_embd, q_n_embd = None, n_head=4, attn_pdrop=.0, resid_pdrop=.0):
+        super().__init__()
+        if q_n_embd is None:
+            q_n_embd = n_embd
+        assert n_embd % n_head == 0, 'Feature length must be divisible by n_head'
+        assert q_n_embd % n_head == 0, 'Query feature length must be divisible by n_head'
+        # key, query, value projections for all heads
+        self.key = nn.Linear(n_embd, n_embd)
+        self.query = nn.Linear(q_n_embd, n_embd)
+        self.value = nn.Linear(n_embd, n_embd)
+        # regularization
+        self.attn_drop = nn.Dropout(attn_pdrop)
+        self.resid_drop = nn.Dropout(resid_pdrop)
+        # output projection
+        self.proj = nn.Linear(n_embd, n_embd)
+        self.n_head = n_head
+
+    def forward(self, query, key, value, mask=None):
+        assert query.size(0) == key.size(0) == value.size(0), 'Batch_size dimension of query, key, value must be the same'
+        assert key.size(1) == value.size(1), 'SeqLen dimension of key, value must be the same'
+        B, T_q, _ = query.size()
+        B, T_k, C = key.size()
+
+
+        # calculate query, key, values for all heads in batch and move head forward to be the batch dim
+        k = self.key(key).view(B, T_k, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+        q = self.query(query).view(B, T_q, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+        v = self.value(value).view(B, T_k, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+
+        # self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
+        att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
+        if mask is not None:
+            att = torch.masked_fill(att, mask == 0, -1e9)
+        att = F.softmax(att, dim=-1)
+        att = self.attn_drop(att)
+        y = att @ v # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
+        y = y.transpose(1, 2).contiguous().view(B, T_q, C) # re-assemble all head outputs side by side
+
+        # output projection
+        y = self.resid_drop(self.proj(y))
+        return y
+
+class TransformerBlock(nn.Module):
+    """ an unassuming Transformer block """
+    def __init__(self, n_embd, n_head=4, block_exp=4, attn_pdrop=.0, resid_pdrop=.0):
+        super().__init__()
+        self.ln1 = nn.LayerNorm(n_embd)
+        self.ln2 = nn.LayerNorm(n_embd)
+        self.attn = SelfAttention(n_embd, n_head, attn_pdrop, resid_pdrop)
+        self.mlp = nn.Sequential(
+            nn.Linear(n_embd, block_exp * n_embd),
+            nn.ReLU(True), # changed from GELU
+            nn.Linear(block_exp * n_embd, n_embd),
+            nn.Dropout(resid_pdrop),
+        )
+
+    def forward(self, x):
+        x = x + self.attn(self.ln1(x))
+        x = x + self.mlp(self.ln2(x))
+        return x
+
+class CrossTransformerBlock(nn.Module):
+    """ an unassuming Transformer block """
+
+    def __init__(self, n_embd, q_n_embd, n_head=4, block_exp=4, attn_pdrop=.0, resid_pdrop=.0):
+        super().__init__()
+        self.ln_begin_kv = nn.LayerNorm(n_embd)
+        self.ln_begin_q = nn.LayerNorm(q_n_embd)
+        self.ln_beforeFFN = nn.LayerNorm(n_embd)
+        self.attn = CrossAttention(n_embd, q_n_embd, n_head, attn_pdrop, resid_pdrop)
+        self.mlp = nn.Sequential(
+            nn.Linear(n_embd, block_exp * n_embd),
+            nn.ReLU(True), # changed from GELU
+            nn.Linear(block_exp * n_embd, n_embd),
+            nn.Dropout(resid_pdrop),
+        )
+
+    def forward(self, q, kv, mask=None):
+
+        bs, c, h, w = kv.size()
+        _, c_q, h_, w_ = q.size()
+        assert h == h_ and w == w_, 'kv and q must have the same spatial dimensions'
+        kv = kv.view(bs, c, -1).transpose(1, 2)
+        q = q.view(bs, c_q, -1).transpose(1, 2)
+
+        kv = self.ln_begin_kv(kv)
+        q = self.ln_begin_q(q)
+        
+        x = kv + self.attn(q, kv, kv, mask)
+        x = x + self.mlp(self.ln_beforeFFN(x))
+
+        x = x.transpose(1, 2).view(bs, c, h, w)
 
         return x
 
 
-def create_pvt_layers(
-    img_size=224, in_chans=3, embed_dims=[64, 128, 256, 512], q_embed_dims=[32, 64, 160, 256],
-    num_heads=[1, 2, 4, 8], mlp_ratios=[4, 4, 4, 4], qkv_bias=False, qk_scale=None, drop_rate=0.,
-    attn_drop_rate=0., drop_path_rate=0., norm_layer=nn.LayerNorm,
-    depths=[3, 4, 6, 3], sr_ratios=[8, 4, 2, 1], num_stages=4, linear=False
-):
-
-    dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(depths))]  # stochastic depth decay rule
-    cur = 0
-
-    layers = []
-    for i in range(num_stages):
-        layer = pvt_layer(
-            img_size=img_size,
-            patch_in_chans=in_chans if i == 0 else embed_dims[i - 1],
-            embed_dims=embed_dims[i],
-            stage_idx=i,
-            cross=True if i > 0 else False,
-            cross_patch_chans=in_chans if i == 0 else q_embed_dims[i - 1],
-            drop_path_rate=dpr[cur:cur + depths[i]],
-            num_heads=num_heads[i],
-            mlp_ratios=mlp_ratios[i],
-            depths=depths[i],
-            sr_ratios=sr_ratios[i],
-            qkv_bias=qkv_bias, qk_scale=qk_scale, drop_rate=drop_rate, attn_drop_rate=attn_drop_rate,
-            norm_layer=norm_layer, linear=linear
-        )
-        cur += depths[i]
-        layers.append(layer)
-    return nn.ModuleList(layers)
 
 class Encoder(nn.Module):
     """
@@ -113,61 +162,81 @@ class Encoder(nn.Module):
     def __init__(self, config):
         super(Encoder, self).__init__()
         self.config = config
-        self.image_encoder = create_pvt_layers(
-                img_size=config.input_resolution,
-                in_chans=3,
-                embed_dims=[32, 64, 160, 256], 
-                q_embed_dims=[32, 64, 160, 256],
-                num_heads=[1, 2, 5, 8], 
-                mlp_ratios=[8, 8, 4, 4], qkv_bias=True,
-                depths=[2, 2, 2, 2], sr_ratios=[8, 4, 2, 1],
-                drop_rate = config.resid_pdrop,
-                attn_drop_rate = config.attn_pdrop,)
-        
-        self.lidar_encoder = create_pvt_layers(
-                img_size=config.input_resolution,
-                in_chans=2,
-                embed_dims=[32, 64, 160, 256], 
-                q_embed_dims=[32, 64, 160, 256], 
-                num_heads=[1, 2, 4, 4], 
-                mlp_ratios=[4, 4, 4, 4], qkv_bias=True,
-                depths=[1, 1, 2, 2], sr_ratios=[4, 4, 2, 1],
-                drop_rate = config.resid_pdrop,
-                attn_drop_rate = config.attn_pdrop,)
-        self.avp = nn.AdaptiveAvgPool2d((1, 1))
-        
-    def forward(self, image_list, lidar_list, velocity, interaction="sum"):
+        self.image_encoder = EfficientViT(**EfficientViT_m1)
+        self.image_encoder = load_weight(self.image_encoder, torch.load('/home/yipin/program/transfuser/model_ckpt/efficientvit/efficientvit_m1.pth')["model"],strict=False)
+        self.lidar_encoder = EfficientViT(in_chans=2, **EfficientViT_m0)
+        self.lidar_encoder = load_weight(self.lidar_encoder, torch.load('/home/yipin/program/transfuser/model_ckpt/efficientvit/efficientvit_m0.pth')["model"],strict=False)
+
+        self.cross_attn_image1 = CrossTransformerBlock(128, 64, n_head=2)
+        self.cross_attn_image2 = CrossTransformerBlock(144, 128, n_head=4)
+        self.cross_attn_image3 = CrossTransformerBlock(192, 192, n_head=4)
+
+        self.cross_attn_lidar1 = CrossTransformerBlock(64, 128, n_head=2)
+        self.cross_attn_lidar2 = CrossTransformerBlock(128, 144, n_head=4)
+        self.cross_attn_lidar3 = CrossTransformerBlock(192, 192, n_head=4)
+
+
+    def forward(self, image_list, lidar_list):
 
         assert len(image_list) == 1, "Only single image input supported"
         assert len(lidar_list) == 1, "Only single lidar input supported"
-
         image = image_list[0]
         lidar = lidar_list[0]
 
-        for i in range(len(self.image_encoder)):
-            image_next = self.image_encoder[i](image, lidar, velocity)
-            lidar_next = self.lidar_encoder[i](lidar, image, velocity)
-            image = image_next
-            lidar = lidar_next
+        image_features = self.image_encoder.patch_embed(image)
+        lidar_features = self.lidar_encoder.patch_embed(lidar)
+
+        image_features = self.image_encoder.blocks1(image_features)
+        lidar_features = self.lidar_encoder.blocks1(lidar_features)
+        image_features_cross = self.cross_attn_image1(lidar_features, image_features)
+        lidar_features_cross = self.cross_attn_lidar1(image_features, lidar_features)
+        image_features = image_features_cross
+        lidar_features = lidar_features_cross
+
+        image_features = self.image_encoder.blocks2(image_features)
+        lidar_features = self.lidar_encoder.blocks2(lidar_features)
+        image_features_cross = self.cross_attn_image2(lidar_features, image_features)
+        lidar_features_cross = self.cross_attn_lidar2(image_features, lidar_features)
+        image_features = image_features_cross
+        lidar_features = lidar_features_cross
+
+        image_features = self.image_encoder.blocks3(image_features)
+        lidar_features = self.lidar_encoder.blocks3(lidar_features)
+        image_features_cross = self.cross_attn_image3(lidar_features, image_features)
+        lidar_features_cross = self.cross_attn_lidar3(image_features, lidar_features)
+        image_features = image_features_cross
+        lidar_features = lidar_features_cross
+
+
+        return image_features, lidar_features
+    
+class Fuser(nn.Module):
+    """ A sequence of Transformer blocks """
+
+    def __init__(self, n_embd, depth, token_num, n_head=4, block_exp=4, attn_pdrop=.0, resid_pdrop=.0):
+        super().__init__()
+        self.pos_emb = nn.Parameter(torch.zeros(1,token_num, n_embd))
+
+        self.velocity_embed = nn.Linear(1, n_embd)
+        self.blocks = nn.ModuleList([TransformerBlock(n_embd, n_head, block_exp, attn_pdrop, resid_pdrop) for _ in range(depth)])
+
+    def forward(self, image_features, lidar_features, velocity):
+        bs, c, h, w = image_features.size()
+        image_features = image_features.view(bs, c, -1).transpose(1, 2)
+        lidar_features = lidar_features.view(bs, c, -1).transpose(1, 2)
+        velocity = self.velocity_embed(velocity.unsqueeze(1)).unsqueeze(1)
+        x = torch.cat([image_features, lidar_features, velocity], dim=1)
+        x = x + self.pos_emb
+
+        for block in self.blocks:
+            x = block(x)
         
-        image = self.avp(image).flatten(1)
-        lidar = self.avp(lidar).flatten(1)
-
-        if interaction == "sum":
-            out = image + lidar
-        elif interaction == "cat":
-            out = torch.cat([image, lidar], dim=1)
-        elif interaction == "dot":
-            T = torch.cat([image.unsqueeze(1), lidar.unsqueeze(1)], dim=1)
-            Z = torch.bmm(T, torch.transpose(T, 1, 2))
-            batch_size, ni, nj = Z.shape
-            li, lj = torch.tril_indices(ni, nj, offset=0)
-            Zflat = Z[:, li, lj]
-            out = torch.cat([image+lidar, Zflat], dim=1)
-        else:
-            raise ValueError(f"Unknown interaction type {interaction}")
-
-        return out
+        tokenNum = h * w
+        image_features = x[:, :tokenNum, :].mean(dim=1)
+        lidar_features = x[:, tokenNum:2*tokenNum, :].mean(dim=1)
+        measure_features = x[:, 2*tokenNum:, :].mean(dim=1)
+        x = torch.cat([image_features, lidar_features, measure_features], dim=1)
+        return x
 
 class PIDController(object):
     def __init__(self, K_P=1.0, K_I=0.0, K_D=0.0, n=20):
@@ -209,12 +278,19 @@ class VitFuser(nn.Module):
         self.speed_controller = PIDController(K_P=config.speed_KP, K_I=config.speed_KI, K_D=config.speed_KD, n=config.speed_n)
 
         self.encoder = Encoder(config).to(self.device)
+        self.fuser = Fuser(n_embd=192,
+                            depth=4,
+                            token_num=33,
+                            n_head=4,
+                            block_exp=4,
+                            attn_pdrop=0.0,
+                            resid_pdrop=0.0).to(self.device)
 
         # self.norm = nn.LayerNorm(512).to(self.device)
         self.join = nn.Sequential(
-                            # nn.Linear(512, 256),
-                            # nn.ReLU(inplace=True),
-                            nn.Linear(259, 128),
+                            nn.Linear(576, 256),
+                            nn.ReLU(inplace=True),
+                            nn.Linear(256, 128),
                             nn.ReLU(inplace=True),
                             nn.Linear(128, 64),
                             nn.ReLU(inplace=True),
@@ -231,8 +307,8 @@ class VitFuser(nn.Module):
             target_point (tensor): goal location registered to ego-frame
             velocity (tensor): input velocity from speedometer
         '''
-        fused_features = self.encoder(image_list, lidar_list, velocity, "dot")
-        # fused_features = self.norm(fused_features)
+        image_feature, lidar_feature = self.encoder(image_list, lidar_list)
+        fused_features = self.fuser(image_feature, lidar_feature, velocity)
         z = self.join(fused_features)
 
         output_wp = list()
@@ -297,16 +373,52 @@ class VitFuser(nn.Module):
 
         return steer, throttle, brake, metadata
 
-# config = GlobalConfig()
-# model = TransFuser(config,"cpu")
 
+# from config import GlobalConfig
+# config = GlobalConfig()
+
+# image = torch.randn(1, 3, 256, 256)
+# lidar = torch.randn(1, 2, 256, 256)
+# velocity = torch.randn(1)
+# target_point = torch.randn(1,2)
+
+
+# model = Encoder(config)
 # print(model)
-# image = torch.randn(10, 3, 256, 256)
-# lidar = torch.randn(10, 2, 256, 256)
-# velocity = torch.randn(10)
-# target_point = torch.randn(10, 2)
-# out = model([image], [lidar], target_point, velocity)
-# print(out.shape)
-# flops, params = profile(model, inputs=([image], [lidar],target_point, velocity))
+# out = model([image], [lidar])
+# print(out[0].shape, out[1].shape)
+# flops, params = profile(model, inputs=([image], [lidar]))
 # flops, params = clever_format([flops, params], "%.3f")
 # print(f'flops: {flops}, params: {params}')
+
+# model = Fuser(n_embd=192,
+#                 depth=4,
+#                 n_head=4,
+#                 block_exp=4,
+#                 attn_pdrop=0.0,
+#                 resid_pdrop=0.0)
+# feature = model(out[0], out[1], veloc)
+# print(feature.shape)
+# flops, params = profile(model, inputs=(out[0], out[1], veloc))
+# flops, params = clever_format([flops, params], "%.3f")
+# print(f'flops: {flops}, params: {params}')
+
+# model = VitFuser(config, 'cpu')
+# print(model)
+# out = model([image], [lidar], target_point, velocity)
+# print(out.shape)
+# flops, params = profile(model, inputs=([image], [lidar], target_point, velocity))
+# flops, params = clever_format([flops, params], "%.3f")
+# print(f'flops: {flops}, params: {params}')
+
+# import time
+# REPEAT = 1000
+# for _ in range(100):
+# 	pred_wp = model([image], [lidar], target_point, velocity)
+# # speed test
+# time_start = time.time()
+# for _ in range(REPEAT):
+# 	pred_wp = model([image], [lidar], target_point, velocity)
+# 	torch.cuda.synchronize()
+# time_end = time.time()
+# print('latency: ', (time_end-time_start)/REPEAT * 1000, 'ms')

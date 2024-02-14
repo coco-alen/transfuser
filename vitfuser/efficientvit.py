@@ -8,7 +8,7 @@ import torch
 import itertools
 
 from timm.models.vision_transformer import trunc_normal_
-from timm.models.layers import SqueezeExcite
+from timm.models.layers import SEModule
 
 class Conv2d_BN(torch.nn.Sequential):
     def __init__(self, a, b, ks=1, stride=1, pad=0, dilation=1,
@@ -67,7 +67,7 @@ class PatchMerging(torch.nn.Module):
         self.conv1 = Conv2d_BN(dim, hid_dim, 1, 1, 0, resolution=input_resolution)
         self.act = torch.nn.ReLU()
         self.conv2 = Conv2d_BN(hid_dim, hid_dim, 3, 2, 1, groups=hid_dim, resolution=input_resolution)
-        self.se = SqueezeExcite(hid_dim, .25)
+        self.se = SEModule(hid_dim, 0.25)
         self.conv3 = Conv2d_BN(hid_dim, out_dim, 1, 1, 0, resolution=input_resolution // 2)
 
     def forward(self, x):
@@ -298,6 +298,11 @@ class EfficientViT(torch.nn.Module):
 
         resolution = img_size
         # Patch embedding
+        # self.patch_embed = torch.nn.Sequential(Conv2d_BN(in_chans, embed_dim[0] // 8, 3, 2, 1, resolution=resolution), torch.nn.ReLU(),
+        #                    Conv2d_BN(embed_dim[0] // 8, embed_dim[0] // 4, 3, 2, 1, resolution=resolution // 2), torch.nn.ReLU(),
+        #                    Conv2d_BN(embed_dim[0] // 4, embed_dim[0] // 2, 3, 2, 1, resolution=resolution // 4), torch.nn.ReLU(),
+        #                    Conv2d_BN(embed_dim[0] // 2, embed_dim[0], 3, 2, 1, resolution=resolution // 8))
+
         self.patch_embed = torch.nn.Sequential(Conv2d_BN(in_chans, embed_dim[0] // 8, 3, 2, 1, resolution=resolution), torch.nn.ReLU(),
                            Conv2d_BN(embed_dim[0] // 8, embed_dim[0] // 4, 3, 2, 1, resolution=resolution // 2), torch.nn.ReLU(),
                            Conv2d_BN(embed_dim[0] // 4, embed_dim[0] // 2, 3, 2, 1, resolution=resolution // 4), torch.nn.ReLU(),
@@ -344,7 +349,7 @@ class EfficientViT(torch.nn.Module):
 
 
 EfficientViT_m0 = {
-        'img_size': 224,
+        'img_size': 256,
         'patch_size': 16,
         'embed_dim': [64, 128, 192],
         'depth': [1, 2, 3],
@@ -354,7 +359,7 @@ EfficientViT_m0 = {
     }
 
 EfficientViT_m1 = {
-        'img_size': 224,
+        'img_size': 256,
         'patch_size': 16,
         'embed_dim': [128, 144, 192],
         'depth': [1, 2, 3],
@@ -364,7 +369,7 @@ EfficientViT_m1 = {
     }
 
 EfficientViT_m2 = {
-        'img_size': 224,
+        'img_size': 256,
         'patch_size': 16,
         'embed_dim': [128, 192, 224],
         'depth': [1, 2, 3],
@@ -374,7 +379,7 @@ EfficientViT_m2 = {
     }
 
 EfficientViT_m3 = {
-        'img_size': 224,
+        'img_size': 256,
         'patch_size': 16,
         'embed_dim': [128, 240, 320],
         'depth': [1, 2, 3],
@@ -384,7 +389,7 @@ EfficientViT_m3 = {
     }
 
 EfficientViT_m4 = {
-        'img_size': 224,
+        'img_size': 256,
         'patch_size': 16,
         'embed_dim': [128, 256, 384],
         'depth': [1, 2, 3],
@@ -394,7 +399,7 @@ EfficientViT_m4 = {
     }
 
 EfficientViT_m5 = {
-        'img_size': 224,
+        'img_size': 256,
         'patch_size': 16,
         'embed_dim': [192, 288, 384],
         'depth': [1, 3, 4],
@@ -402,3 +407,111 @@ EfficientViT_m5 = {
         'window_size': [7, 7, 7],
         'kernels': [7, 5, 3, 3],
     }
+
+def EfficientViT_M0(num_classes=1000, pretrained=False, distillation=False, fuse=False, pretrained_cfg=None, model_cfg=EfficientViT_m0):
+    model = EfficientViT(**model_cfg)
+    if pretrained:
+        pretrained = _checkpoint_url_format.format(pretrained)
+        checkpoint = torch.hub.load_state_dict_from_url(
+            pretrained, map_location='cpu')
+        d = checkpoint['model']
+        D = model.state_dict()
+        for k in d.keys():
+            if D[k].shape != d[k].shape:
+                d[k] = d[k][:, :, None, None]
+        model.load_state_dict(d)
+    if fuse:
+        replace_batchnorm(model)
+    return model
+
+def EfficientViT_M1(num_classes=1000, pretrained=False, distillation=False, fuse=False, pretrained_cfg=None, model_cfg=EfficientViT_m1):
+    model = EfficientViT(**model_cfg)
+    if pretrained:
+        pretrained = _checkpoint_url_format.format(pretrained)
+        checkpoint = torch.hub.load_state_dict_from_url(
+            pretrained, map_location='cpu')
+        d = checkpoint['model']
+        D = model.state_dict()
+        for k in d.keys():
+            if D[k].shape != d[k].shape:
+                d[k] = d[k][:, :, None, None]
+        model.load_state_dict(d)
+    if fuse:
+        replace_batchnorm(model)
+    return model
+
+def EfficientViT_M2(num_classes=1000, pretrained=False, distillation=False, fuse=False, pretrained_cfg=None, model_cfg=EfficientViT_m2):
+    model = EfficientViT(**model_cfg)
+    if pretrained:
+        pretrained = _checkpoint_url_format.format(pretrained)
+        checkpoint = torch.hub.load_state_dict_from_url(
+            pretrained, map_location='cpu')
+        d = checkpoint['model']
+        D = model.state_dict()
+        for k in d.keys():
+            if D[k].shape != d[k].shape:
+                d[k] = d[k][:, :, None, None]
+        model.load_state_dict(d)
+    if fuse:
+        replace_batchnorm(model)
+    return model
+
+def EfficientViT_M3(num_classes=1000, pretrained=False, distillation=False, fuse=False, pretrained_cfg=None, model_cfg=EfficientViT_m3):
+    model = EfficientViT(**model_cfg)
+    if pretrained:
+        pretrained = _checkpoint_url_format.format(pretrained)
+        checkpoint = torch.hub.load_state_dict_from_url(
+            pretrained, map_location='cpu')
+        d = checkpoint['model']
+        D = model.state_dict()
+        for k in d.keys():
+            if D[k].shape != d[k].shape:
+                d[k] = d[k][:, :, None, None]
+        model.load_state_dict(d)
+    if fuse:
+        replace_batchnorm(model)
+    return model
+
+def EfficientViT_M4(num_classes=1000, pretrained=False, distillation=False, fuse=False, pretrained_cfg=None, model_cfg=EfficientViT_m4):
+    model = EfficientViT(**model_cfg)
+    if pretrained:
+        pretrained = _checkpoint_url_format.format(pretrained)
+        checkpoint = torch.hub.load_state_dict_from_url(
+            pretrained, map_location='cpu')
+        d = checkpoint['model']
+        D = model.state_dict()
+        for k in d.keys():
+            if D[k].shape != d[k].shape:
+                d[k] = d[k][:, :, None, None]
+        model.load_state_dict(d)
+    if fuse:
+        replace_batchnorm(model)
+    return model
+
+def EfficientViT_M5(num_classes=1000, pretrained=False, distillation=False, fuse=False, pretrained_cfg=None, model_cfg=EfficientViT_m5):
+    model = EfficientViT(**model_cfg)
+    if pretrained:
+        pretrained = _checkpoint_url_format.format(pretrained)
+        checkpoint = torch.hub.load_state_dict_from_url(
+            pretrained, map_location='cpu')
+        d = checkpoint['model']
+        D = model.state_dict()
+        for k in d.keys():
+            if D[k].shape != d[k].shape:
+                d[k] = d[k][:, :, None, None]
+        model.load_state_dict(d)
+    if fuse:
+        replace_batchnorm(model)
+    return model
+
+def replace_batchnorm(net):
+    for child_name, child in net.named_children():
+        if hasattr(child, 'fuse'):
+            setattr(net, child_name, child.fuse())
+        elif isinstance(child, torch.nn.BatchNorm2d):
+            setattr(net, child_name, torch.nn.Identity())
+        else:
+            replace_batchnorm(child)
+
+_checkpoint_url_format = \
+    'https://github.com/xinyuliu-jeffrey/EfficientViT_Model_Zoo/releases/download/v1.0/{}.pth'

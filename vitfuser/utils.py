@@ -1,9 +1,8 @@
 import torch
 import torch.nn as nn
 
-def load_weight(model:nn.Module, weight_dir:str, strict = True) -> nn.Module:
+def load_weight(model:nn.Module, state_dict:dict, strict = True) -> nn.Module:
     current_state_dict = model.state_dict()
-    state_dict = torch.load(weight_dir)
     for key in state_dict:
         if key not in list(current_state_dict.keys()):
             continue
@@ -43,3 +42,4 @@ def load_weight(model:nn.Module, weight_dir:str, strict = True) -> nn.Module:
 
     print('Unused keys in pretrained_weights:', unused_keys)
     print('Parameters in model without loaded weights:', unused_params)
+    return model
