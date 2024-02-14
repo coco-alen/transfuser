@@ -12,7 +12,7 @@ import torch.nn.functional as F
 torch.backends.cudnn.benchmark = True
 
 from config import GlobalConfig
-from model import VitFuser
+from model_decoderOnly import VitFuser
 from data import CARLA_Data
 from utils import load_weight
 torch.cuda.empty_cache()
@@ -97,7 +97,7 @@ class Engine(object):
 				
 				gt_waypoints = [torch.stack(data['waypoints'][i], dim=1).to(args.device, dtype=torch.float32) for i in range(config.seq_len, len(data['waypoints']))]
 				gt_waypoints = torch.stack(gt_waypoints, dim=1).to(args.device, dtype=torch.float32)
-				loss = F.mse_loss(pred_wp, gt_waypoints, reduction='none')
+				loss = F.l1_loss(pred_wp, gt_waypoints, reduction='none').mean()
 				loss.backward()
 				loss_epoch += float(loss.item())
 
@@ -156,7 +156,7 @@ class Engine(object):
 
 				gt_waypoints = [torch.stack(data['waypoints'][i], dim=1).to(args.device, dtype=torch.float32) for i in range(config.seq_len, len(data['waypoints']))]
 				gt_waypoints = torch.stack(gt_waypoints, dim=1).to(args.device, dtype=torch.float32)
-				wp_epoch += float(F.mse_loss(pred_wp, gt_waypoints, reduction='none'))
+				wp_epoch += float(F.l1_loss(pred_wp, gt_waypoints, reduction='none').mean())
 
 				num_batches += 1
 					

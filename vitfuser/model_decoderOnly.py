@@ -210,32 +210,31 @@ class Encoder(nn.Module):
 
         return image_features, lidar_features
     
-class Fuser(nn.Module):
+class Decoder(nn.Module):
     """ A sequence of Transformer blocks """
 
-    def __init__(self, n_embd, depth, token_num, n_head=4, block_exp=4, attn_pdrop=.0, resid_pdrop=.0):
+    def __init__(self, n_embd, depth, token_num,pred_len, n_head=4, block_exp=4, attn_pdrop=.0, resid_pdrop=.0):
         super().__init__()
-        self.pos_emb = nn.Parameter(torch.zeros(1,token_num, n_embd))
+        self.pos_emb = nn.Parameter(torch.zeros(1,token_num + pred_len, n_embd))
+        self.predict_emb = nn.Parameter(torch.zeros(1, pred_len, n_embd))
 
         self.velocity_embed = nn.Linear(1, n_embd)
+        self.target_embed = nn.Linear(2, n_embd)
         self.blocks = nn.ModuleList([TransformerBlock(n_embd, n_head, block_exp, attn_pdrop, resid_pdrop) for _ in range(depth)])
 
-    def forward(self, image_features, lidar_features, velocity):
+    def forward(self, image_features, lidar_features, target_point, velocity):
         bs, c, h, w = image_features.size()
         image_features = image_features.view(bs, c, -1).transpose(1, 2)
         lidar_features = lidar_features.view(bs, c, -1).transpose(1, 2)
         velocity = self.velocity_embed(velocity.unsqueeze(1)).unsqueeze(1)
-        x = torch.cat([image_features, lidar_features, velocity], dim=1)
+        target_point = self.target_embed(target_point).unsqueeze(1)
+        predict_features = self.predict_emb.repeat(bs, 1, 1)
+        x = torch.cat([image_features, lidar_features, velocity, target_point, predict_features], dim=1)
         x = x + self.pos_emb
 
         for block in self.blocks:
             x = block(x)
         
-        tokenNum = h * w
-        image_features = x[:, :tokenNum, :].mean(dim=1)
-        lidar_features = x[:, tokenNum:2*tokenNum, :].mean(dim=1)
-        measure_features = x[:, 2*tokenNum:, :].mean(dim=1)
-        x = torch.cat([image_features, lidar_features, measure_features], dim=1)
         return x
 
 class PIDController(object):
@@ -262,6 +261,24 @@ class PIDController(object):
 
         return self._K_P * error + self._K_I * integral + self._K_D * derivative
 
+class GRUWaypointsPredictor(nn.Module):
+    def __init__(self, input_dim, waypoints=10):
+        super().__init__()
+        # self.gru = torch.nn.GRUCell(input_size=input_dim, hidden_size=64)
+        self.gru = torch.nn.GRU(input_size=input_dim, hidden_size=64, batch_first=True)
+        self.encoder = nn.Linear(2, 64)
+        self.decoder = nn.Linear(64, 2)
+        self.waypoints = waypoints
+
+    def forward(self, x, target_point):
+        bs = x.shape[0]
+        z = self.encoder(target_point).unsqueeze(0)
+        output, _ = self.gru(x, z)
+        output = output.reshape(bs * self.waypoints, -1)
+        output = self.decoder(output).reshape(bs, self.waypoints, 2)
+        output = torch.cumsum(output, 1)
+        return output
+
 class VitFuser(nn.Module):
     '''
     Transformer-based feature fusion followed by GRU-based waypoint prediction network and PID controller
@@ -277,25 +294,28 @@ class VitFuser(nn.Module):
         self.speed_controller = PIDController(K_P=config.speed_KP, K_I=config.speed_KI, K_D=config.speed_KD, n=config.speed_n)
 
         self.encoder = Encoder(config).to(self.device)
-        self.fuser = Fuser(n_embd=192,
+        self.decoder = Decoder(n_embd=192,
                             depth=8,
-                            token_num=33,
+                            token_num=34,
+                            pred_len=config.pred_len,
                             n_head=4,
                             block_exp=4,
                             attn_pdrop=0.0,
                             resid_pdrop=0.0).to(self.device)
 
-        # self.norm = nn.LayerNorm(512).to(self.device)
-        self.join = nn.Sequential(
-                            nn.Linear(576, 256),
+        # self.downsample = nn.Sequential(
+        #                     nn.Linear(192, 64),
+        #                     nn.ReLU(inplace=True),
+        #                 ).to(self.device)
+        
+        # self.predictor = GRUWaypointsPredictor(64, waypoints=config.pred_len).to(self.device)
+        self.out = nn.Sequential(
+                            nn.Linear(192, 64),
                             nn.ReLU(inplace=True),
-                            nn.Linear(256, 128),
+                            nn.Linear(64, 16),
                             nn.ReLU(inplace=True),
-                            nn.Linear(128, 64),
-                            nn.ReLU(inplace=True),
+                            nn.Linear(16, 2)
                         ).to(self.device)
-        self.decoder = nn.GRUCell(input_size=2, hidden_size=64).to(self.device)
-        self.output = nn.Linear(64, 2).to(self.device)
         
     def forward(self, image_list, lidar_list, target_point, velocity):
         '''
@@ -307,24 +327,18 @@ class VitFuser(nn.Module):
             velocity (tensor): input velocity from speedometer
         '''
         image_feature, lidar_feature = self.encoder(image_list, lidar_list)
-        fused_features = self.fuser(image_feature, lidar_feature, velocity)
-        z = self.join(fused_features)
+        fused_features = self.decoder(image_feature, lidar_feature, target_point, velocity)
+        predict_features = fused_features[:,-self.pred_len:,:] # predict last 4 waypoints
+        # z = self.downsample(predict_features)
+        # pred_wp = self.predictor(z, target_point)
 
-        output_wp = list()
-
-        # initial input variable to GRU
-        x = torch.zeros(size=(z.shape[0], 2), dtype=z.dtype).to(self.device)
-        # autoregressive generation of output waypoints
-        for _ in range(self.pred_len):
-            # x_in = torch.cat([x, target_point], dim=1)
-            x_in = x + target_point
-            z = self.decoder(x_in, z)
-            dx = self.output(z)
-            x = dx + x
-            output_wp.append(x)
-
-        pred_wp = torch.stack(output_wp, dim=1)
-
+        pred_dx = self.out(predict_features)
+        pred_wp = list()
+        x = torch.zeros(size=(pred_dx.shape[0], 2), dtype=pred_dx.dtype).to(self.device)
+        for i in range(self.pred_len):
+            x = x + pred_dx[:,i,:]
+            pred_wp.append(x)
+        pred_wp = torch.stack(pred_wp, dim=1)
         return pred_wp
 
     def control_pid(self, waypoints, velocity):
