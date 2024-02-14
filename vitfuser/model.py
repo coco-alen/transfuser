@@ -7,7 +7,6 @@ import torch.nn as nn
 
 from pvt import OverlapPatchEmbed, Block, CrossAttention
 
-from config import GlobalConfig
 from thop import profile
 from thop import clever_format
 
@@ -36,11 +35,11 @@ class pvt_layer(nn.Module):
                                         embed_dim=embed_dims)
         self.cross = cross
         if self.cross == True:
-            self.cross_patch = OverlapPatchEmbed(img_size=img_size if stage_idx == 0 else img_size // (2 ** (stage_idx + 1)),
-                                        patch_size=7 if stage_idx == 0 else 3,
-                                        stride=4 if stage_idx == 0 else 2,
-                                        in_chans=cross_patch_chans,
-                                        embed_dim=embed_dims)
+            # self.cross_patch = OverlapPatchEmbed(img_size=img_size if stage_idx == 0 else img_size // (2 ** (stage_idx + 1)),
+            #                             patch_size=7 if stage_idx == 0 else 3,
+            #                             stride=4 if stage_idx == 0 else 2,
+            #                             in_chans=cross_patch_chans,
+            #                             embed_dim=embed_dims)
             self.cross_attn = CrossAttention(
                 n_embd=embed_dims,
                 n_head=num_heads,
@@ -60,7 +59,8 @@ class pvt_layer(nn.Module):
         B = kv.shape[0]
         x, H, W = self.patch_embed(kv)
         if self.cross == True:
-            q, H_, W_ = self.cross_patch(q)
+            q, H_, W_ = self.patch_embed(q)
+            # q, H_, W_ = self.cross_patch(q)
             velc = self.vel_emb(velocity.unsqueeze(1)).unsqueeze(1)
             q = q + velc
             assert H == H_ and W == W_, "kv and q must have the same spatial resolution!"
@@ -117,7 +117,7 @@ class Encoder(nn.Module):
                 img_size=config.input_resolution,
                 in_chans=3,
                 embed_dims=[32, 64, 160, 256], 
-                q_embed_dims=[16, 32, 96, 256],
+                q_embed_dims=[32, 64, 160, 256],
                 num_heads=[1, 2, 5, 8], 
                 mlp_ratios=[8, 8, 4, 4], qkv_bias=True,
                 depths=[2, 2, 2, 2], sr_ratios=[8, 4, 2, 1],
@@ -127,7 +127,7 @@ class Encoder(nn.Module):
         self.lidar_encoder = create_pvt_layers(
                 img_size=config.input_resolution,
                 in_chans=2,
-                embed_dims=[16, 32, 96, 256], 
+                embed_dims=[32, 64, 160, 256], 
                 q_embed_dims=[32, 64, 160, 256], 
                 num_heads=[1, 2, 4, 4], 
                 mlp_ratios=[4, 4, 4, 4], qkv_bias=True,
@@ -155,15 +155,15 @@ class Encoder(nn.Module):
 
         if interaction == "sum":
             out = image + lidar
-        elif interaction == "concat":
-            out = torch.cat(image, lidar, dim=1)
+        elif interaction == "cat":
+            out = torch.cat([image, lidar], dim=1)
         elif interaction == "dot":
             T = torch.cat([image.unsqueeze(1), lidar.unsqueeze(1)], dim=1)
             Z = torch.bmm(T, torch.transpose(T, 1, 2))
             batch_size, ni, nj = Z.shape
             li, lj = torch.tril_indices(ni, nj, offset=0)
             Zflat = Z[:, li, lj]
-            out = torch.cat([image, Zflat], dim=1)
+            out = torch.cat([image+lidar, Zflat], dim=1)
         else:
             raise ValueError(f"Unknown interaction type {interaction}")
 
@@ -210,9 +210,11 @@ class VitFuser(nn.Module):
 
         self.encoder = Encoder(config).to(self.device)
 
-        self.norm = nn.LayerNorm(256).to(self.device)
+        # self.norm = nn.LayerNorm(512).to(self.device)
         self.join = nn.Sequential(
-                            nn.Linear(256, 128),
+                            # nn.Linear(512, 256),
+                            # nn.ReLU(inplace=True),
+                            nn.Linear(259, 128),
                             nn.ReLU(inplace=True),
                             nn.Linear(128, 64),
                             nn.ReLU(inplace=True),
@@ -229,8 +231,8 @@ class VitFuser(nn.Module):
             target_point (tensor): goal location registered to ego-frame
             velocity (tensor): input velocity from speedometer
         '''
-        fused_features = self.encoder(image_list, lidar_list, velocity, "sum")
-        fused_features = self.norm(fused_features)
+        fused_features = self.encoder(image_list, lidar_list, velocity, "dot")
+        # fused_features = self.norm(fused_features)
         z = self.join(fused_features)
 
         output_wp = list()

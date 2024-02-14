@@ -11,7 +11,7 @@ from thop import clever_format
 torch.backends.cudnn.benchmark = True
 
 from config import GlobalConfig
-from model import TransFuser
+from model import VitFuser
 from data import CARLA_Data
 from utils import load_weight
 os.environ["CUDA_VISIBLE_DEVICES"] = '0'
@@ -19,7 +19,7 @@ torch.cuda.empty_cache()
 
 #  ===  hyperparameters  === 
 BATCH_SIZE = 64
-PTH_PATH = '/home/yipin/program/transfuser/model_ckpt/2021/transfuser/best_model.pth'
+PTH_PATH = '/home/gyp/program/my_transfuser/transfuser/vitfuser/log/vitfuser_pvt/best_model.pth'
 DEV = "cuda"
 REPEAT = 1000
 #  ========================= 
@@ -102,7 +102,7 @@ val_set = CARLA_Data(root=config.val_data, config=config)
 dataloader_val = DataLoader(val_set, batch_size=BATCH_SIZE, shuffle=False, num_workers=8, pin_memory=True)
 
 # Model
-model = TransFuser(config, DEV)
+model = VitFuser(config, DEV)
 print(model)
 load_weight(model, PTH_PATH)
 # model.eval()
