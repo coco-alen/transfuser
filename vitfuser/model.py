@@ -9,8 +9,8 @@ import torch.nn.functional as F
 from thop import profile
 from thop import clever_format
 
-from efficientvit import EfficientViT, EfficientViT_m0, EfficientViT_m1, EfficientViT_m2, EfficientViT_m3, replace_batchnorm
-from utils import load_weight
+from .efficientvit import EfficientViT, EfficientViT_m0, EfficientViT_m1, EfficientViT_m2, EfficientViT_m3, replace_batchnorm
+from .utils import load_weight
 
 torch.autograd.set_detect_anomaly(True)
 
@@ -163,9 +163,9 @@ class Encoder(nn.Module):
         super(Encoder, self).__init__()
         self.config = config
         self.image_encoder = EfficientViT(**EfficientViT_m1)
-        self.image_encoder = load_weight(self.image_encoder, torch.load('/home/yipin/program/transfuser/model_ckpt/efficientvit/efficientvit_m1.pth')["model"],strict=False)
+        # self.image_encoder = load_weight(self.image_encoder, torch.load('/home/gyp/program/my_transfuser/transfuser/model_ckpt/efficientvit/efficientvit_m1.pth')["model"],strict=False)
         self.lidar_encoder = EfficientViT(in_chans=2, **EfficientViT_m0)
-        self.lidar_encoder = load_weight(self.lidar_encoder, torch.load('/home/yipin/program/transfuser/model_ckpt/efficientvit/efficientvit_m0.pth')["model"],strict=False)
+        # self.lidar_encoder = load_weight(self.lidar_encoder, torch.load('/home/gyp/program/my_transfuser/transfuser/model_ckpt/efficientvit/efficientvit_m0.pth')["model"],strict=False)
 
         self.cross_attn_image1 = CrossTransformerBlock(128, 64, n_head=2)
         self.cross_attn_image2 = CrossTransformerBlock(144, 128, n_head=4)
@@ -263,6 +263,25 @@ class PIDController(object):
         return self._K_P * error + self._K_I * integral + self._K_D * derivative
 
 
+class GRUWaypointsPredictor(nn.Module):
+    def __init__(self, input_dim, waypoints=10):
+        super().__init__()
+        # self.gru = torch.nn.GRUCell(input_size=input_dim, hidden_size=64)
+        self.gru = torch.nn.GRU(input_size=input_dim, hidden_size=64, batch_first=True)
+        self.encoder = nn.Linear(2, 64)
+        self.decoder = nn.Linear(64, 2)
+        self.waypoints = waypoints
+
+    def forward(self, x, target_point):
+        bs = x.shape[0]
+        z = self.encoder(target_point).unsqueeze(0)
+        output, _ = self.gru(x, z)
+        output = output.reshape(bs * self.waypoints, -1)
+        output = self.decoder(output).reshape(bs, self.waypoints, 2)
+        output = torch.cumsum(output, 1)
+        return output
+
+
 class VitFuser(nn.Module):
     '''
     Transformer-based feature fusion followed by GRU-based waypoint prediction network and PID controller
@@ -295,7 +314,8 @@ class VitFuser(nn.Module):
                             nn.Linear(128, 64),
                             nn.ReLU(inplace=True),
                         ).to(self.device)
-        self.decoder = nn.GRUCell(input_size=2, hidden_size=64).to(self.device)
+        # self.decoder = nn.GRUCell(input_size=2, hidden_size=64).to(self.device)
+        self.decoder = GRUWaypointsPredictor(64, waypoints=self.pred_len).to(self.device)
         self.output = nn.Linear(64, 2).to(self.device)
         
     def forward(self, image_list, lidar_list, target_point, velocity):
@@ -315,7 +335,6 @@ class VitFuser(nn.Module):
 
         # initial input variable to GRU
         x = torch.zeros(size=(z.shape[0], 2), dtype=z.dtype).to(self.device)
-
         # autoregressive generation of output waypoints
         for _ in range(self.pred_len):
             # x_in = torch.cat([x, target_point], dim=1)
@@ -373,7 +392,12 @@ class VitFuser(nn.Module):
 
         return steer, throttle, brake, metadata
 
-
+model = GRUWaypointsPredictor(64, waypoints=4)
+print(model)
+image = torch.randn(1, 64)
+target = torch.randn(1,2)
+out = model(image, target)
+print(out.shape)
 # from config import GlobalConfig
 # config = GlobalConfig()
 
