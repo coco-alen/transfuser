@@ -13,7 +13,7 @@ import numpy as np
 from PIL import Image
 
 from leaderboard.autoagents import autonomous_agent
-from vitfuser.model import VitFuser
+from vitfuser.model_decoderOnly import VitFuser
 from vitfuser.config import GlobalConfig
 from vitfuser.data import scale_and_crop_image, lidar_to_histogram_features, transform_2d_points
 from team_code.planner import RoutePlanner

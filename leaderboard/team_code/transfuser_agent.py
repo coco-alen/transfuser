@@ -192,7 +192,8 @@ class TransFuserAgent(autonomous_agent.AutonomousAgent):
 				self.input_buffer['rgb_right'].append(rgb_right.to('cuda', dtype=torch.float32))
 
 			if not self.config.ignore_rear:
-				rgb_rear = torch.from_numpy(scale_and_crop_image(Image.fromarray(tick_data['rgb_rear']), crop=self.config.input_resolution)).unsqueeze(0)
+				# rgb_rear = torch.from_numpy(scale_and_crop_image(Image.fromarray(tick_data['rgb_rear']), crop=self.config.input_resolution)).unsqueeze(0)
+				rgb_rear = torch.from_numpy(scale_and_crop_image(Image.fromarray(tick_data['rgb']), scale=0.35, crop=self.config.input_resolution)).unsqueeze(0)
 				self.input_buffer['rgb_rear'].append(rgb_rear.to('cuda', dtype=torch.float32))
 
 			self.input_buffer['lidar'].append(tick_data['lidar'])
@@ -228,7 +229,8 @@ class TransFuserAgent(autonomous_agent.AutonomousAgent):
 			self.input_buffer['rgb_right'].append(rgb_right.to('cuda', dtype=torch.float32))
 
 		if not self.config.ignore_rear:
-			rgb_rear = torch.from_numpy(scale_and_crop_image(Image.fromarray(tick_data['rgb_rear']), crop=self.config.input_resolution)).unsqueeze(0)
+			# rgb_rear = torch.from_numpy(scale_and_crop_image(Image.fromarray(tick_data['rgb_rear']), crop=self.config.input_resolution)).unsqueeze(0)
+			rgb_rear = torch.from_numpy(scale_and_crop_image(Image.fromarray(tick_data['rgb']), scale=0.35, crop=self.config.input_resolution)).unsqueeze(0)
 			self.input_buffer['rgb_rear'].popleft()
 			self.input_buffer['rgb_rear'].append(rgb_rear.to('cuda', dtype=torch.float32))
 
