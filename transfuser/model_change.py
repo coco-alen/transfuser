@@ -6,7 +6,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 from torchvision import models
-from .resnet import resnet18, resnet34, resnet50
+from resnet import resnet18, resnet34, resnet50
 
 class ImageCNN(nn.Module):
     """ 
@@ -276,13 +276,17 @@ class GPT(nn.Module):
 
     def __init__(self, n_embd, n_head, block_exp, n_layer, 
                     vert_anchors, horz_anchors, seq_len, 
-                    embd_pdrop, attn_pdrop, resid_pdrop, config):
+                    embd_pdrop, attn_pdrop, resid_pdrop, config, shortcut=False, shortcut_dim=64):
         super().__init__()
         self.n_embd = n_embd
         self.seq_len = seq_len
         self.vert_anchors = vert_anchors
         self.horz_anchors = horz_anchors
         self.config = config
+
+        self.shortcut = shortcut
+        if shortcut==True:
+            self.upsample = nn.Linear(shortcut_dim, n_embd)
 
         # positional embedding parameter (learnable), image + lidar
         self.pos_emb = nn.Parameter(torch.zeros(1, (self.config.n_views + 1) * seq_len * vert_anchors * horz_anchors, n_embd))
@@ -346,7 +350,7 @@ class GPT(nn.Module):
 
         return optim_groups
 
-    def forward(self, image_tensor, lidar_tensor, velocity):
+    def forward(self, image_tensor, lidar_tensor, velocity, previous=None):
         """
         Args:
             image_tensor (tensor): B*4*seq_len, C, H, W
@@ -370,16 +374,18 @@ class GPT(nn.Module):
 
         # add (learnable) positional embedding and velocity embedding for all tokens
         x = self.drop(self.pos_emb + token_embeddings + velocity_embeddings.unsqueeze(1)) # (B, an * T, C)
+        if previous is not None and self.shortcut==True:
+            x = x + self.upsample(previous)
         # x = self.drop(token_embeddings + velocity_embeddings.unsqueeze(1)) # (B, an * T, C)
         x = self.blocks(x) # (B, an * T, C)
-        x = self.ln_f(x) # (B, an * T, C)
+        x_feature = self.ln_f(x) # (B, an * T, C)
         x = x.view(bz, (self.config.n_views + 1) * self.seq_len, self.vert_anchors, self.horz_anchors, self.n_embd)
         x = x.permute(0,1,4,2,3).contiguous() # same as token_embeddings
 
         image_tensor_out = x[:, :self.config.n_views*self.seq_len, :, :, :].contiguous().view(bz * self.config.n_views * self.seq_len, -1, h, w)
         lidar_tensor_out = x[:, self.config.n_views*self.seq_len:, :, :, :].contiguous().view(bz * self.seq_len, -1, h, w)
         
-        return image_tensor_out, lidar_tensor_out
+        return image_tensor_out, lidar_tensor_out, x_feature
 
 
 class Encoder(nn.Module):
@@ -428,7 +434,9 @@ class Encoder(nn.Module):
                             embd_pdrop=config.embd_pdrop, 
                             attn_pdrop=config.attn_pdrop, 
                             resid_pdrop=config.resid_pdrop,
-                            config=config)
+                            config=config,
+                            shortcut=True,
+                            shortcut_dim=64)
         self.transformer4 = GPT(n_embd=512,
                             n_head=config.n_head, 
                             block_exp=config.block_exp, 
@@ -439,7 +447,9 @@ class Encoder(nn.Module):
                             embd_pdrop=config.embd_pdrop, 
                             attn_pdrop=config.attn_pdrop, 
                             resid_pdrop=config.resid_pdrop,
-                            config=config)
+                            config=config,
+                            shortcut=True,
+                            shortcut_dim=128)
 
         
     def forward(self, image_list, lidar_list, velocity):
@@ -475,7 +485,7 @@ class Encoder(nn.Module):
         # fusion at (B, 64, 64, 64)
         image_embd_layer1 = self.avgpool(image_features)
         lidar_embd_layer1 = self.avgpool(lidar_features)
-        image_features_layer1, lidar_features_layer1 = self.transformer1(image_embd_layer1, lidar_embd_layer1, velocity)
+        image_features_layer1, lidar_features_layer1, feature1 = self.transformer1(image_embd_layer1, lidar_embd_layer1, velocity)
         image_features_layer1 = F.interpolate(image_features_layer1, scale_factor=8, mode='bilinear')
         lidar_features_layer1 = F.interpolate(lidar_features_layer1, scale_factor=8, mode='bilinear')
         image_features = image_features + image_features_layer1
@@ -486,7 +496,7 @@ class Encoder(nn.Module):
         # fusion at (B, 128, 32, 32)
         image_embd_layer2 = self.avgpool(image_features)
         lidar_embd_layer2 = self.avgpool(lidar_features)
-        image_features_layer2, lidar_features_layer2 = self.transformer2(image_embd_layer2, lidar_embd_layer2, velocity)
+        image_features_layer2, lidar_features_layer2, feature2 = self.transformer2(image_embd_layer2, lidar_embd_layer2, velocity)
         image_features_layer2 = F.interpolate(image_features_layer2, scale_factor=4, mode='bilinear')
         lidar_features_layer2 = F.interpolate(lidar_features_layer2, scale_factor=4, mode='bilinear')
         image_features = image_features + image_features_layer2
@@ -497,7 +507,7 @@ class Encoder(nn.Module):
         # fusion at (B, 256, 16, 16)
         image_embd_layer3 = self.avgpool(image_features)
         lidar_embd_layer3 = self.avgpool(lidar_features)
-        image_features_layer3, lidar_features_layer3 = self.transformer3(image_embd_layer3, lidar_embd_layer3, velocity)
+        image_features_layer3, lidar_features_layer3, _ = self.transformer3(image_embd_layer3, lidar_embd_layer3, velocity, feature1)
         image_features_layer3 = F.interpolate(image_features_layer3, scale_factor=2, mode='bilinear')
         lidar_features_layer3 = F.interpolate(lidar_features_layer3, scale_factor=2, mode='bilinear')
         image_features = image_features + image_features_layer3
@@ -508,7 +518,7 @@ class Encoder(nn.Module):
         # fusion at (B, 512, 8, 8)
         image_embd_layer4 = self.avgpool(image_features)
         lidar_embd_layer4 = self.avgpool(lidar_features)
-        image_features_layer4, lidar_features_layer4 = self.transformer4(image_embd_layer4, lidar_embd_layer4, velocity)
+        image_features_layer4, lidar_features_layer4, _ = self.transformer4(image_embd_layer4, lidar_embd_layer4, velocity, feature2)
         image_features = image_features + image_features_layer4
         lidar_features = lidar_features + lidar_features_layer4
 
@@ -650,3 +660,37 @@ class TransFuser(nn.Module):
         }
 
         return steer, throttle, brake, metadata
+
+
+if __name__ == '__main__':
+
+    from thop import profile
+    from thop import clever_format
+
+    from config import GlobalConfig
+    config = GlobalConfig()
+
+    image = torch.randn(1, 3, 256, 256, device='cuda')
+    lidar = torch.randn(1, 2, 256, 256, device='cuda')
+    velocity = torch.randn(1, device='cuda')
+    target_point = torch.randn(1,2, device='cuda')
+
+    model = TransFuser(config, 'cuda')
+    print(model)
+    out = model([image], [lidar], target_point, velocity)
+    print(out.shape)
+    flops, params = profile(model, inputs=([image], [lidar], target_point, velocity))
+    flops, params = clever_format([flops, params], "%.3f")
+    print(f'flops: {flops}, params: {params}')
+
+    import time
+    REPEAT = 1000
+    for _ in range(100):
+        pred_wp = model([image], [lidar], target_point, velocity)
+    # speed test
+    time_start = time.time()
+    for _ in range(REPEAT):
+        pred_wp = model([image], [lidar], target_point, velocity)
+        torch.cuda.synchronize()
+    time_end = time.time()
+    print('latency: ', (time_end-time_start)/REPEAT * 1000, 'ms')

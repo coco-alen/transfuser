@@ -333,12 +333,8 @@ class VitFuser(nn.Module):
         # pred_wp = self.predictor(z, target_point)
 
         pred_dx = self.out(predict_features)
-        pred_wp = list()
-        x = torch.zeros(size=(pred_dx.shape[0], 2), dtype=pred_dx.dtype).to(self.device)
-        for i in range(self.pred_len):
-            x = x + pred_dx[:,i,:]
-            pred_wp.append(x)
-        pred_wp = torch.stack(pred_wp, dim=1)
+        pred_wp = torch.cumsum(pred_dx, 1)
+        
         return pred_wp
 
     def control_pid(self, waypoints, velocity):
