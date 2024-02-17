@@ -6,7 +6,7 @@ class GlobalConfig:
     seq_len = 1 # input timesteps
     pred_len = 4 # future waypoints predicted
 
-    root_dir = '/ssd/dataset/transfuser/2021/data/clear_weather_data'
+    root_dir = '/DATA1/yipin/dataset/transfuser/2021/full_dataset'
     train_towns = ['Town01', 'Town02', 'Town03', 'Town04', 'Town06', 'Town07', 'Town10']
     val_towns = ['Town05']
     train_data, val_data = [], []
@@ -18,7 +18,7 @@ class GlobalConfig:
         val_data.append(os.path.join(root_dir, town+'_short'))
 
     # visualizing transformer attention maps
-    viz_root = '/ssd/dataset/transfuser/2021/data/attention_maps'
+    viz_root = '/DATA1/yipin/dataset/transfuser/2021/attention_maps'
     viz_towns = ['Town05_tiny']
     viz_data = []
     for town in viz_towns:
@@ -63,6 +63,10 @@ class GlobalConfig:
     brake_speed = 0.1 # desired speed below which brake is triggered
     brake_ratio = 1.1 # ratio of speed to desired speed at which brake is triggered
     clip_delta = 0.25 # maximum change in speed input to logitudinal controller
+
+    aim_dist = 4.0 # distance to search around for aim point
+    angle_thresh = 0.3 # outlier control detection angle
+    dist_thresh = 10 # target point y-distance for outlier filtering
 
     # train config
     wp_weight = 0.5
