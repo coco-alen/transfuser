@@ -4,9 +4,9 @@ import torch
 from torch import nn
 from torchvision import models
 
-from TCP.resnet import *
-from TCP.mobilenet import *
-from TCP.litemono.LiteMono_encoder import LiteMono
+from resnet import *
+from mobilenet import *
+from litemono import LiteMono
 
 class PIDController(object):
 	def __init__(self, K_P=1.0, K_I=0.0, K_D=0.0, n=20):

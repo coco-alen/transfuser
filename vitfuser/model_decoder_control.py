@@ -9,8 +9,8 @@ import torch.nn.functional as F
 from thop import profile
 from thop import clever_format
 
-from .efficientvit import EfficientViT, EfficientViT_m0, EfficientViT_m1, EfficientViT_m2, EfficientViT_m3, replace_batchnorm
-from .utils import load_weight
+from efficientvit import EfficientViT, EfficientViT_m0, EfficientViT_m1, EfficientViT_m2, EfficientViT_m3, replace_batchnorm
+from utils import load_weight
 
 torch.autograd.set_detect_anomaly(True)
 
@@ -163,17 +163,9 @@ class Encoder(nn.Module):
         super(Encoder, self).__init__()
         self.config = config
         self.image_encoder = EfficientViT(**EfficientViT_m1)
-        # self.image_encoder = load_weight(self.image_encoder, torch.load('/home/gyp/program/my_transfuser/transfuser/model_ckpt/efficientvit/efficientvit_m2.pth')["model"],strict=False)
+        # self.image_encoder = load_weight(self.image_encoder, torch.load('/home/gyp/program/my_transfuser/transfuser/model_ckpt/efficientvit/efficientvit_m1.pth')["model"],strict=False)
         self.lidar_encoder = EfficientViT(in_chans=2, **EfficientViT_m0)
-        # self.lidar_encoder = load_weight(self.lidar_encoder, torch.load('/home/gyp/program/my_transfuser/transfuser/model_ckpt/efficientvit/efficientvit_m1.pth')["model"],strict=False)
-
-        # self.cross_attn_image1 = CrossTransformerBlock(128, 128, n_head=2)
-        # self.cross_attn_image2 = CrossTransformerBlock(192, 144, n_head=4)
-        # self.cross_attn_image3 = CrossTransformerBlock(224, 192, n_head=8)
-
-        # self.cross_attn_lidar1 = CrossTransformerBlock(128, 128, n_head=2)
-        # self.cross_attn_lidar2 = CrossTransformerBlock(144, 192, n_head=4)
-        # self.cross_attn_lidar3 = CrossTransformerBlock(192, 224, n_head=8)
+        # self.lidar_encoder = load_weight(self.lidar_encoder, torch.load('/home/gyp/program/my_transfuser/transfuser/model_ckpt/efficientvit/efficientvit_m0.pth')["model"],strict=False)
 
         self.cross_attn_image1 = CrossTransformerBlock(128, 64, n_head=2)
         self.cross_attn_image2 = CrossTransformerBlock(144, 128, n_head=4)
@@ -228,16 +220,26 @@ class Decoder(nn.Module):
 
         self.velocity_embed = nn.Linear(1, n_embd)
         self.target_embed = nn.Linear(2, n_embd)
+        self.command_embed = nn.Embedding(7, n_embd)
+        self.brake_embed = nn.Embedding(2, n_embd)
+        self.throttle_embed = nn.Linear(1, n_embd)
+        self.steer_embed = nn.Linear(1, n_embd)
         self.blocks = nn.ModuleList([TransformerBlock(n_embd, n_head, block_exp, attn_pdrop, resid_pdrop) for _ in range(depth)])
 
-    def forward(self, image_features, lidar_features, target_point, velocity):
+    def forward(self, image_features, lidar_features, target_point, velocity, command, brake, throttle, steer):
         bs, c, h, w = image_features.size()
         image_features = image_features.view(bs, c, -1).transpose(1, 2)
         lidar_features = lidar_features.view(bs, c, -1).transpose(1, 2)
+
         velocity = self.velocity_embed(velocity.unsqueeze(1)).unsqueeze(1)
         target_point = self.target_embed(target_point).unsqueeze(1)
+        command = self.command_embed(command).unsqueeze(1)
+        brake = self.brake_embed(brake).unsqueeze(1)
+        throttle = self.throttle_embed(throttle.unsqueeze(1)).unsqueeze(1)
+        steer = self.steer_embed(steer.unsqueeze(1)).unsqueeze(1)
+
         predict_features = self.predict_emb.repeat(bs, 1, 1)
-        x = torch.cat([image_features, lidar_features, velocity, target_point, predict_features], dim=1)
+        x = torch.cat([image_features, lidar_features, velocity, target_point,command, brake, throttle, steer, predict_features], dim=1)
         x = x + self.pos_emb
 
         for block in self.blocks:
@@ -302,10 +304,9 @@ class VitFuser(nn.Module):
         self.speed_controller = PIDController(K_P=config.speed_KP, K_I=config.speed_KI, K_D=config.speed_KD, n=config.speed_n)
 
         self.encoder = Encoder(config).to(self.device)
-        # self.neck = nn.Conv2d(192, 224, kernel_size=1, stride=1, padding=0, bias=False).to(self.device)
         self.decoder = Decoder(n_embd=192,
                             depth=8,
-                            token_num=34,
+                            token_num=38,
                             pred_len=config.pred_len,
                             n_head=4,
                             block_exp=4,
@@ -326,7 +327,7 @@ class VitFuser(nn.Module):
         #                     nn.Linear(16, 2)
         #                 ).to(self.device)
         
-    def forward(self, image_list, lidar_list, target_point, velocity):
+    def forward(self, image_list, lidar_list, target_point, velocity, command, brake, throttle, steer):
         '''
         Predicts waypoint from geometric feature projections of image + LiDAR input
         Args:
@@ -336,17 +337,18 @@ class VitFuser(nn.Module):
             velocity (tensor): input velocity from speedometer
         '''
         image_feature, lidar_feature = self.encoder(image_list, lidar_list)
-
-        # lidar_feature = self.neck(lidar_feature)
-
-        fused_features = self.decoder(image_feature, lidar_feature, target_point, velocity)
+        fused_features = self.decoder(image_feature, lidar_feature, target_point, velocity, command, brake, throttle, steer)
         predict_features = fused_features[:,-self.pred_len:,:] # predict last 4 waypoints
         z = self.downsample(predict_features)
         pred_wp = self.predictor(z, target_point)
 
         # pred_dx = self.out(predict_features)
-        # pred_wp = torch.cumsum(pred_dx, 1)
-        
+        # pred_wp = list()
+        # x = torch.zeros(size=(pred_dx.shape[0], 2), dtype=pred_dx.dtype).to(self.device)
+        # for i in range(self.pred_len):
+        #     x = x + pred_dx[:,i,:]
+        #     pred_wp.append(x)
+        # pred_wp = torch.stack(pred_wp, dim=1)
         return pred_wp
 
     def control_pid(self, waypoints, velocity):
