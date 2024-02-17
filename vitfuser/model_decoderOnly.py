@@ -190,6 +190,7 @@ class Encoder(nn.Module):
         assert len(lidar_list) == 1, "Only single lidar input supported"
         image = image_list[0]
         lidar = lidar_list[0]
+        self.normalize_imagenet(image)
 
         image_features = self.image_encoder.patch_embed(image)
         lidar_features = self.lidar_encoder.patch_embed(lidar)
@@ -217,7 +218,18 @@ class Encoder(nn.Module):
 
 
         return image_features, lidar_features
-    
+
+    def normalize_imagenet(self, x):
+        """ Normalize input images according to ImageNet standards.
+        Args:
+            x (tensor): input images
+        """
+        x = x.clone()
+        x[:, 0] = (x[:, 0] - 0.485) / 0.229
+        x[:, 1] = (x[:, 1] - 0.456) / 0.224
+        x[:, 2] = (x[:, 2] - 0.406) / 0.225
+        return x
+
 class Decoder(nn.Module):
     """ A sequence of Transformer blocks """
 
@@ -349,29 +361,58 @@ class VitFuser(nn.Module):
         
         return pred_wp
 
-    def control_pid(self, waypoints, velocity):
-        ''' 
-        Predicts vehicle control with a PID controller.
+    def control_pid(self, waypoints, velocity, target):
+        ''' Predicts vehicle control with a PID controller.
         Args:
-            waypoints (tensor): predicted waypoints
+            waypoints (tensor): output of self.plan()
             velocity (tensor): speedometer input
         '''
         assert(waypoints.size(0)==1)
         waypoints = waypoints[0].data.cpu().numpy()
+        target = target.squeeze().data.cpu().numpy()
 
-        # flip y is (forward is negative in our waypoints)
+        # flip y (forward is negative in our waypoints)
         waypoints[:,1] *= -1
-        speed = velocity[0].data.cpu().numpy()
+        target[1] *= -1
 
-        desired_speed = np.linalg.norm(waypoints[0] - waypoints[1]) * 2.0
-        brake = desired_speed < self.config.brake_speed or (speed / desired_speed) > self.config.brake_ratio
+        # iterate over vectors between predicted waypoints
+        num_pairs = len(waypoints) - 1
+        best_norm = 1e5
+        desired_speed = 0
+        aim = waypoints[0]
+        for i in range(num_pairs):
+            # magnitude of vectors, used for speed
+            desired_speed += np.linalg.norm(
+                    waypoints[i+1] - waypoints[i]) * 2.0 / num_pairs
 
-        aim = (waypoints[1] + waypoints[0]) / 2.0
+            # norm of vector midpoints, used for steering
+            norm = np.linalg.norm((waypoints[i+1] + waypoints[i]) / 2.0)
+            if abs(self.config.aim_dist-best_norm) > abs(self.config.aim_dist-norm):
+                aim = waypoints[i]
+                best_norm = norm
+
+        aim_last = waypoints[-1] - waypoints[-2]
+
         angle = np.degrees(np.pi / 2 - np.arctan2(aim[1], aim[0])) / 90
-        if(speed < 0.01):
-            angle = np.array(0.0) # When we don't move we don't want the angle error to accumulate in the integral
-        steer = self.turn_controller.step(angle)
+        angle_last = np.degrees(np.pi / 2 - np.arctan2(aim_last[1], aim_last[0])) / 90
+        angle_target = np.degrees(np.pi / 2 - np.arctan2(target[1], target[0])) / 90
+
+        # choice of point to aim for steering, removing outlier predictions
+        # use target point if it has a smaller angle or if error is large
+        # predicted point otherwise
+        # (reduces noise in eg. straight roads, helps with sudden turn commands)
+        use_target_to_aim = np.abs(angle_target) < np.abs(angle)
+        use_target_to_aim = use_target_to_aim or (np.abs(angle_target-angle_last) > self.config.angle_thresh and target[1] < self.config.dist_thresh)
+        if use_target_to_aim:
+            angle_final = angle_target
+        else:
+            angle_final = angle
+
+        steer = self.turn_controller.step(angle_final)
         steer = np.clip(steer, -1.0, 1.0)
+
+        speed = velocity[0].data.cpu().numpy()
+        brake = desired_speed < self.config.brake_speed or (speed / desired_speed) > self.config.brake_ratio
 
         delta = np.clip(desired_speed - speed, 0.0, self.config.clip_delta)
         throttle = self.speed_controller.step(delta)
@@ -383,15 +424,65 @@ class VitFuser(nn.Module):
             'steer': float(steer),
             'throttle': float(throttle),
             'brake': float(brake),
+            'wp_4': tuple(waypoints[3].astype(np.float64)),
+            'wp_3': tuple(waypoints[2].astype(np.float64)),
             'wp_2': tuple(waypoints[1].astype(np.float64)),
             'wp_1': tuple(waypoints[0].astype(np.float64)),
+            'aim': tuple(aim.astype(np.float64)),
+            'target': tuple(target.astype(np.float64)),
             'desired_speed': float(desired_speed.astype(np.float64)),
             'angle': float(angle.astype(np.float64)),
-            'aim': tuple(aim.astype(np.float64)),
+            'angle_last': float(angle_last.astype(np.float64)),
+            'angle_target': float(angle_target.astype(np.float64)),
+            'angle_final': float(angle_final.astype(np.float64)),
             'delta': float(delta.astype(np.float64)),
         }
 
         return steer, throttle, brake, metadata
+
+    # def control_pid(self, waypoints, velocity):
+    #     ''' 
+    #     Predicts vehicle control with a PID controller.
+    #     Args:
+    #         waypoints (tensor): predicted waypoints
+    #         velocity (tensor): speedometer input
+    #     '''
+    #     assert(waypoints.size(0)==1)
+    #     waypoints = waypoints[0].data.cpu().numpy()
+
+    #     # flip y is (forward is negative in our waypoints)
+    #     waypoints[:,1] *= -1
+    #     speed = velocity[0].data.cpu().numpy()
+
+    #     desired_speed = np.linalg.norm(waypoints[0] - waypoints[1]) * 2.0
+    #     brake = desired_speed < self.config.brake_speed or (speed / desired_speed) > self.config.brake_ratio
+
+    #     aim = (waypoints[1] + waypoints[0]) / 2.0
+    #     angle = np.degrees(np.pi / 2 - np.arctan2(aim[1], aim[0])) / 90
+    #     if(speed < 0.01):
+    #         angle = np.array(0.0) # When we don't move we don't want the angle error to accumulate in the integral
+    #     steer = self.turn_controller.step(angle)
+    #     steer = np.clip(steer, -1.0, 1.0)
+
+    #     delta = np.clip(desired_speed - speed, 0.0, self.config.clip_delta)
+    #     throttle = self.speed_controller.step(delta)
+    #     throttle = np.clip(throttle, 0.0, self.config.max_throttle)
+    #     throttle = throttle if not brake else 0.0
+
+    #     metadata = {
+    #         'speed': float(speed.astype(np.float64)),
+    #         'steer': float(steer),
+    #         'throttle': float(throttle),
+    #         'brake': float(brake),
+    #         'wp_2': tuple(waypoints[1].astype(np.float64)),
+    #         'wp_1': tuple(waypoints[0].astype(np.float64)),
+    #         'desired_speed': float(desired_speed.astype(np.float64)),
+    #         'angle': float(angle.astype(np.float64)),
+    #         'aim': tuple(aim.astype(np.float64)),
+    #         'delta': float(delta.astype(np.float64)),
+    #     }
+
+    #     return steer, throttle, brake, metadata
 
 # from config import GlobalConfig
 # config = GlobalConfig()

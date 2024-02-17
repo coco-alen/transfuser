@@ -6,11 +6,12 @@ class GlobalConfig:
     seq_len = 1 # input timesteps
     pred_len = 4 # future waypoints predicted
 
-    root_dir = '/ssd/dataset/transfuser/2021/data/14_weathers_minimal_data'
+    root_dir = '/ssd/dataset/transfuser/2021/data/clear_weather_data'
     train_towns = ['Town01', 'Town02', 'Town03', 'Town04', 'Town06', 'Town07', 'Town10']
     val_towns = ['Town05']
     train_data, val_data = [], []
     for town in train_towns:
+        # train_data.append(os.path.join(root_dir, town+'_long'))
         train_data.append(os.path.join(root_dir, town+'_tiny'))
         train_data.append(os.path.join(root_dir, town+'_short'))
     for town in val_towns:
@@ -62,6 +63,13 @@ class GlobalConfig:
     brake_speed = 0.1 # desired speed below which brake is triggered
     brake_ratio = 1.1 # ratio of speed to desired speed at which brake is triggered
     clip_delta = 0.25 # maximum change in speed input to logitudinal controller
+
+    # train config
+    wp_weight = 0.5
+    steer_weight = 0.3
+    brake_weight = 0.1
+    throttle_weight = 0.2
+    img_aug = True
 
     def __init__(self, **kwargs):
         for k,v in kwargs.items():

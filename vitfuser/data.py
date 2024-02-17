@@ -1,12 +1,15 @@
 import os
+import sys
 import json
 from PIL import Image
 
 import numpy as np
 import torch 
 from torch.utils.data import Dataset
+from torchvision import transforms as T
 from tqdm import tqdm
-import sys
+
+from augment import hard as augmenter
 
 class CARLA_Data(Dataset):
 
@@ -19,6 +22,9 @@ class CARLA_Data(Dataset):
 
         self.input_resolution = config.input_resolution
         self.scale = config.scale
+
+        self.img_aug = config.img_aug
+        self._batch_read_number = 0
 
         self.lidar = []
         self.front = []
@@ -196,8 +202,17 @@ class CARLA_Data(Dataset):
         pos = []
         neg = []
         for i in range(self.seq_len):
-            data['fronts'].append(torch.from_numpy(np.array(
-                scale_and_crop_image(Image.open(seq_fronts[i]), scale=self.scale, crop=self.input_resolution))))
+            rgb_front = np.array(
+                scale_and_crop_image(Image.open(seq_fronts[i]), scale=self.scale, crop=self.input_resolution))
+            if self.img_aug:
+                rgb_front = np.transpose(rgb_front, (1,2,0))
+                augd_image = augmenter(self._batch_read_number).augment_image(rgb_front)
+                augd_image = np.transpose(augd_image, (2,0,1))
+                rgb_front = torch.from_numpy(augd_image)
+            else:
+                rgb_front = torch.from_numpy(rgb_front)
+            data['fronts'].append(rgb_front)
+            
             if not self.ignore_sides:
                 data['lefts'].append(torch.from_numpy(np.array(
                     scale_and_crop_image(Image.open(seq_lefts[i]), scale=self.scale, crop=self.input_resolution))))
@@ -262,6 +277,7 @@ class CARLA_Data(Dataset):
         data['command'] = self.command[index]
         data['velocity'] = self.velocity[index]
         
+        self._batch_read_number += 1
         return data
 
 
