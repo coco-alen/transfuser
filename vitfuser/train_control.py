@@ -12,7 +12,7 @@ import torch.nn.functional as F
 torch.backends.cudnn.benchmark = True
 
 from config import GlobalConfig
-from model_decoder_control import VitFuser
+from model_decoder_control2 import VitFuser
 from data import CARLA_Data
 from utils import load_weight
 torch.cuda.empty_cache()
@@ -161,7 +161,7 @@ class Engine(object):
 
                 pred_wp, pred_steer, pred_acc = model(fronts+lefts+rights+rears, lidars, target_point, gt_velocity, command)
                 pred_throttle = torch.clamp(pred_acc, min=0, max=1)
-                pred_brake = (pred_acc < 0).float()
+                pred_brake = torch.clamp(-pred_acc, min=0, max=1)
 
                 gt_waypoints = [torch.stack(data['waypoints'][i], dim=1).to(args.device, dtype=torch.float32) for i in range(config.seq_len, len(data['waypoints']))]
                 gt_waypoints = torch.stack(gt_waypoints, dim=1).to(args.device, dtype=torch.float32)
