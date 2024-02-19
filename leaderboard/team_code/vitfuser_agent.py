@@ -260,7 +260,8 @@ class VitFuserAgent(autonomous_agent.AutonomousAgent):
 							   self.input_buffer['rgb_right']+self.input_buffer['rgb_rear'], \
 							   self.lidar_processed, target_point, gt_velocity)
 
-		steer, throttle, brake, metadata = self.net.control_pid(self.pred_wp, gt_velocity)
+		steer, throttle, brake, metadata = self.net.control_pid(self.pred_wp, gt_velocity, target_point)
+		# steer, throttle, brake, metadata = self.net.control_pid(self.pred_wp, gt_velocity)
 		self.pid_metadata = metadata
 
 		if brake < 0.05: brake = 0.0
