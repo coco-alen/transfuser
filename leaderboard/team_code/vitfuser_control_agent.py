@@ -13,7 +13,7 @@ import numpy as np
 from PIL import Image
 
 from leaderboard.autoagents import autonomous_agent
-from vitfuser.model_decoderOnly import VitFuser
+from vitfuser.model_decoder_control2 import VitFuser
 from vitfuser.config import GlobalConfig
 from vitfuser.data import scale_and_crop_image, lidar_to_histogram_features, transform_2d_points
 from team_code.planner import RoutePlanner
@@ -207,7 +207,7 @@ class VitFuserAgent(autonomous_agent.AutonomousAgent):
 			return control
 
 		gt_velocity = torch.FloatTensor([tick_data['speed']]).to('cuda', dtype=torch.float32)
-		command = torch.FloatTensor([tick_data['next_command']]).to('cuda', dtype=torch.float32)
+		command = torch.FloatTensor([tick_data['next_command']]).to('cuda', dtype=torch.int)
 
 		tick_data['target_point'] = [torch.FloatTensor([tick_data['target_point'][0]]),
 											torch.FloatTensor([tick_data['target_point'][1]])]
@@ -243,6 +243,10 @@ class VitFuserAgent(autonomous_agent.AutonomousAgent):
 		ego_theta = self.input_buffer['thetas'][-1]
 		ego_x, ego_y = self.input_buffer['gps'][-1]
 
+
+		pred_steer = 0.0
+		pred_throttle = 0.0
+		pred_brake = 0.0
 		#Only predict every second step because we only get a LiDAR every second frame.
 		if(self.step  % 2 == 0 or self.step <= 4):
 			for i, lidar_point_cloud in enumerate(self.input_buffer['lidar']):
@@ -256,20 +260,38 @@ class VitFuserAgent(autonomous_agent.AutonomousAgent):
 				self.lidar_processed.append(lidar_transformed.to('cuda', dtype=torch.float32))
 
 
-			self.pred_wp = self.net(self.input_buffer['rgb'] + self.input_buffer['rgb_left'] + \
+			self.pred_wp, pred_steer, pred_acc = self.net(self.input_buffer['rgb'] + self.input_buffer['rgb_left'] + \
 							   self.input_buffer['rgb_right']+self.input_buffer['rgb_rear'], \
-							   self.lidar_processed, target_point, gt_velocity)
+							   self.lidar_processed, target_point, gt_velocity, command)
 
-		steer, throttle, brake, metadata = self.net.control_pid(self.pred_wp, gt_velocity)
+			pred_steer = float(pred_steer.cpu().numpy())
+			pred_throttle = float(torch.clamp(pred_acc, min=0, max=1).cpu().numpy())
+			pred_brake = float(torch.clamp(-pred_acc, min=0, max=1).cpu().numpy())
+
+		steer, throttle, brake, metadata = self.net.control_pid(self.pred_wp, gt_velocity, target_point)
 		self.pid_metadata = metadata
 
 		if brake < 0.05: brake = 0.0
 		if throttle > brake: brake = 0.0
 
 		control = carla.VehicleControl()
-		control.steer = float(steer)
-		control.throttle = float(throttle)
-		control.brake = float(brake)
+		# control.steer = float(steer)
+		# control.throttle = float(throttle)
+		# control.brake = float(brake)
+		predict_first = True
+		if predict_first:
+			self.alpha = 0.5
+			self.pid_metadata['agent'] = 'traj'
+			control.steer = np.clip(self.alpha*steer + (1-self.alpha)*pred_steer, -1, 1)
+			control.throttle = np.clip(self.alpha*throttle + (1-self.alpha)*pred_throttle, 0, 1)
+			control.brake = np.clip(self.alpha*brake + (1-self.alpha)*pred_brake, 0, 1)
+		else:
+			self.alpha = 0.3
+			self.pid_metadata['agent'] = 'ctrl'
+			control.steer = np.clip(self.alpha*pred_steer + (1-self.alpha)*steer, -1, 1)
+			control.throttle = np.clip(self.alpha*pred_throttle + (1-self.alpha)*throttle, 0, 1)
+			control.brake = np.clip(self.alpha*pred_brake + (1-self.alpha)*brake, 0, 1)
+
 
 		if SAVE_PATH is not None and self.step % 10 == 0:
 			self.save(tick_data)
