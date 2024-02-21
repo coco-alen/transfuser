@@ -37,12 +37,12 @@ class SelfAttention(nn.Module):
         B, T, C = x.size()
 
         # calculate query, key, values for all heads in batch and move head forward to be the batch dim
-        k = self.key(x).view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
-        q = self.query(x).view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
-        v = self.value(x).view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+        k = self.key(x).view(B, T, self.n_head, C // self.n_head).transpose(1, 2).contiguous() # (B, nh, T, hs)
+        q = self.query(x).view(B, T, self.n_head, C // self.n_head).transpose(1, 2).contiguous() # (B, nh, T, hs)
+        v = self.value(x).view(B, T, self.n_head, C // self.n_head).transpose(1, 2).contiguous() # (B, nh, T, hs)
 
         # self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
-        att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
+        att = (q @ k.transpose(-2, -1).contiguous()) * (1.0 / math.sqrt(k.size(-1)))
         att = F.softmax(att, dim=-1)
         att = self.attn_drop(att)
         y = att @ v # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
@@ -82,12 +82,12 @@ class CrossAttention(nn.Module):
 
 
         # calculate query, key, values for all heads in batch and move head forward to be the batch dim
-        k = self.key(key).view(B, T_k, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
-        q = self.query(query).view(B, T_q, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
-        v = self.value(value).view(B, T_k, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+        k = self.key(key).view(B, T_k, self.n_head, C // self.n_head).transpose(1, 2).contiguous() # (B, nh, T, hs)
+        q = self.query(query).view(B, T_q, self.n_head, C // self.n_head).transpose(1, 2).contiguous() # (B, nh, T, hs)
+        v = self.value(value).view(B, T_k, self.n_head, C // self.n_head).transpose(1, 2).contiguous() # (B, nh, T, hs)
 
         # self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
-        att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
+        att = (q @ k.transpose(-2, -1).contiguous()) * (1.0 / math.sqrt(k.size(-1)))
         if mask is not None:
             att = torch.masked_fill(att, mask == 0, -1e9)
         att = F.softmax(att, dim=-1)
@@ -139,8 +139,8 @@ class CrossTransformerBlock(nn.Module):
         bs, c, h, w = kv.size()
         _, c_q, h_, w_ = q.size()
         assert h == h_ and w == w_, 'kv and q must have the same spatial dimensions'
-        kv = kv.view(bs, c, -1).transpose(1, 2)
-        q = q.view(bs, c_q, -1).transpose(1, 2)
+        kv = kv.view(bs, c, -1).transpose(1, 2).contiguous()
+        q = q.view(bs, c_q, -1).transpose(1, 2).contiguous()
 
         kv = self.ln_begin_kv(kv)
         q = self.ln_begin_q(q)
@@ -148,7 +148,7 @@ class CrossTransformerBlock(nn.Module):
         x = kv + self.attn(q, kv, kv, mask)
         # x = x + self.mlp(self.ln_beforeFFN(x))
 
-        x = x.transpose(1, 2).view(bs, c, h, w)
+        x = x.transpose(1, 2).contiguous().view(bs, c, h, w)
 
         return x
 
@@ -163,10 +163,10 @@ class Encoder(nn.Module):
         super(Encoder, self).__init__()
         self.config = config
         self.n_view = 2
-        self.f_image_encoder = EfficientViT(in_chans=6, **EfficientViT_m1) # f for front
-        self.f_image_encoder = load_weight(self.f_image_encoder, torch.load('/home/yipin/program/transfuser/model_ckpt/efficientvit/efficientvit_m1.pth')["model"],strict=False)
-        self.lr_image_encoder = EfficientViT(in_chans=6, **EfficientViT_m0) # lr for left and right
-        self.lr_image_encoder = load_weight(self.lr_image_encoder, torch.load('/home/yipin/program/transfuser/model_ckpt/efficientvit/efficientvit_m0.pth')["model"],strict=False)
+        self.f_image_encoder = EfficientViT(in_chans=3, **EfficientViT_m1) # f for front
+        self.f_image_encoder = load_weight(self.f_image_encoder, torch.load('/home/gyp/program/my_transfuser/transfuser/model_ckpt/efficientvit/efficientvit_m1.pth')["model"],strict=False)
+        self.lr_image_encoder = EfficientViT(in_chans=3, **EfficientViT_m0) # lr for left and right
+        self.lr_image_encoder = load_weight(self.lr_image_encoder, torch.load('/home/gyp/program/my_transfuser/transfuser/model_ckpt/efficientvit/efficientvit_m0.pth')["model"],strict=False)
 
         self.cross_attn_f1 = CrossTransformerBlock(128, 64, n_head=2)
         self.cross_attn_f2 = CrossTransformerBlock(144, 128, n_head=4)

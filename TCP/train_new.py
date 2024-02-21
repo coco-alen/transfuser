@@ -59,7 +59,7 @@ class TCP_planner(pl.LightningModule):
 
         gt_waypoints = batch['waypoints']
 
-        pred = self.model([front_img, focus_img], [left_img, right_img], target_point, speed, command)
+        pred = self.model([front_img], [focus_img], target_point, speed, command)
 
         dist_sup = Beta(batch['action_mu'], batch['action_sigma'])
         dist_pred = Beta(pred['mu_branches'], pred['sigma_branches'])
@@ -105,7 +105,7 @@ class TCP_planner(pl.LightningModule):
 
         gt_waypoints = batch['waypoints']
 
-        pred = self.model([front_img, focus_img], [left_img, right_img], target_point, speed, command)
+        pred = self.model([front_img], [focus_img], target_point, speed, command)
         
         dist_sup = Beta(batch['action_mu'], batch['action_sigma'])
         dist_pred = Beta(pred['mu_branches'], pred['sigma_branches'])
@@ -163,7 +163,6 @@ if __name__ == "__main__":
     dataloader_val = DataLoader(val_set, batch_size=args.batch_size, shuffle=False, num_workers=8)
 
     TCP_model = TCP_planner(config, args.lr)
-    ckpt_path = None
     if args.load_weights is not None:
         print(f"load weights from {args.load_weights}")
         TCP_model.load_state_dict(torch.load(args.load_weights), strict=False)
@@ -171,7 +170,8 @@ if __name__ == "__main__":
     if not os.path.isdir(args.logdir):
         os.makedirs(args.logdir, exist_ok=True)
         print('Created dir:', args.logdir)
-    elif os.path.isfile(os.path.join(args.logdir, 'recent.log')):
+        ckpt_path = None
+    else:
         print('Loading checkpoint from ' + args.logdir)
         ckpt_path = os.path.join(args.logdir, 'last.ckpt')
 

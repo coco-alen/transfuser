@@ -170,12 +170,12 @@ class CascadedGroupAttention(torch.nn.Module):
             q = self.dws[i](q)
             q, k, v = q.flatten(2), k.flatten(2), v.flatten(2) # B, C/h, N
             attn = (
-                (q.transpose(-2, -1) @ k) * self.scale
+                (q.transpose(-2, -1).contiguous() @ k) * self.scale
                 +
                 (trainingab[i] if self.training else self.ab[i])
             )
             attn = attn.softmax(dim=-1) # BNN
-            feat = (v @ attn.transpose(-2, -1)).view(B, self.d, H, W) # BCHW
+            feat = (v @ attn.transpose(-2, -1).contiguous()).view(B, self.d, H, W) # BCHW
             feats_out.append(feat)
         x = self.proj(torch.cat(feats_out, 1))
         return x
@@ -220,7 +220,7 @@ class LocalWindowAttention(torch.nn.Module):
         if H <= self.window_resolution and W <= self.window_resolution:
             x = self.attn(x)
         else:
-            x = x.permute(0, 2, 3, 1)
+            x = x.permute(0, 2, 3, 1).contiguous()
             pad_b = (self.window_resolution - H %
                      self.window_resolution) % self.window_resolution
             pad_r = (self.window_resolution - W %
@@ -234,13 +234,13 @@ class LocalWindowAttention(torch.nn.Module):
             nH = pH // self.window_resolution
             nW = pW // self.window_resolution
             # window partition, BHWC -> B(nHh)(nWw)C -> BnHnWhwC -> (BnHnW)hwC -> (BnHnW)Chw
-            x = x.view(B, nH, self.window_resolution, nW, self.window_resolution, C).transpose(2, 3).reshape(
+            x = x.view(B, nH, self.window_resolution, nW, self.window_resolution, C).transpose(2, 3).contiguous().reshape(
                 B * nH * nW, self.window_resolution, self.window_resolution, C
-            ).permute(0, 3, 1, 2)
+            ).permute(0, 3, 1, 2).contiguous()
             x = self.attn(x)
             # window reverse, (BnHnW)Chw -> (BnHnW)hwC -> BnHnWhwC -> B(nHh)(nWw)C -> BHWC
-            x = x.permute(0, 2, 3, 1).view(B, nH, nW, self.window_resolution, self.window_resolution,
-                       C).transpose(2, 3).reshape(B, pH, pW, C)
+            x = x.permute(0, 2, 3, 1).contiguous().view(B, nH, nW, self.window_resolution, self.window_resolution,
+                       C).transpose(2, 3).contiguous().reshape(B, pH, pW, C)
             if padding:
                 x = x[:, :H, :W].contiguous()
             x = x.permute(0, 3, 1, 2)
