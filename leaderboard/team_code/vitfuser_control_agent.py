@@ -278,19 +278,20 @@ class VitFuserAgent(autonomous_agent.AutonomousAgent):
 		# control.steer = float(steer)
 		# control.throttle = float(throttle)
 		# control.brake = float(brake)
-		predict_first = True
+		predict_first = False
 		if predict_first:
-			self.alpha = 0.5
+			self.alpha = 0.3
 			self.pid_metadata['agent'] = 'traj'
 			control.steer = np.clip(self.alpha*steer + (1-self.alpha)*pred_steer, -1, 1)
-			control.throttle = np.clip(self.alpha*throttle + (1-self.alpha)*pred_throttle, 0, 1)
+			control.throttle = np.clip(self.alpha*throttle + (1-self.alpha)*pred_throttle, 0, 0.75)
 			control.brake = np.clip(self.alpha*brake + (1-self.alpha)*pred_brake, 0, 1)
 		else:
 			self.alpha = 0.3
 			self.pid_metadata['agent'] = 'ctrl'
 			control.steer = np.clip(self.alpha*pred_steer + (1-self.alpha)*steer, -1, 1)
-			control.throttle = np.clip(self.alpha*pred_throttle + (1-self.alpha)*throttle, 0, 1)
-			control.brake = np.clip(self.alpha*pred_brake + (1-self.alpha)*brake, 0, 1)
+			control.throttle = np.clip(self.alpha*pred_throttle + (1-self.alpha)*throttle, 0, 0.75)
+			brake = self.alpha*pred_brake + (1-self.alpha)*brake if pred_brake<0.1 else pred_brake
+			control.brake = np.clip(brake, 0, 1)
 
 
 		if SAVE_PATH is not None and self.step % 10 == 0:

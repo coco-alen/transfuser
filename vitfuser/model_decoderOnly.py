@@ -9,8 +9,8 @@ import torch.nn.functional as F
 from thop import profile
 from thop import clever_format
 
-from .efficientvit import EfficientViT, EfficientViT_m0, EfficientViT_m1, EfficientViT_m2, EfficientViT_m3, replace_batchnorm
-from .utils import load_weight
+from efficientvit import EfficientViT, EfficientViT_m0, EfficientViT_m1, EfficientViT_m2, EfficientViT_m3, replace_batchnorm
+from utils import load_weight
 
 torch.autograd.set_detect_anomaly(True)
 
@@ -125,14 +125,14 @@ class CrossTransformerBlock(nn.Module):
         super().__init__()
         self.ln_begin_kv = nn.LayerNorm(n_embd)
         self.ln_begin_q = nn.LayerNorm(q_n_embd)
-        self.ln_beforeFFN = nn.LayerNorm(n_embd)
+        # self.ln_beforeFFN = nn.LayerNorm(n_embd)
         self.attn = CrossAttention(n_embd, q_n_embd, n_head, attn_pdrop, resid_pdrop)
-        self.mlp = nn.Sequential(
-            nn.Linear(n_embd, block_exp * n_embd),
-            nn.ReLU(True), # changed from GELU
-            nn.Linear(block_exp * n_embd, n_embd),
-            nn.Dropout(resid_pdrop),
-        )
+        # self.mlp = nn.Sequential(
+        #     nn.Linear(n_embd, block_exp * n_embd),
+        #     nn.ReLU(True), # changed from GELU
+        #     nn.Linear(block_exp * n_embd, n_embd),
+        #     nn.Dropout(resid_pdrop),
+        # )
 
     def forward(self, q, kv, mask=None):
 
@@ -146,7 +146,7 @@ class CrossTransformerBlock(nn.Module):
         q = self.ln_begin_q(q)
         
         x = kv + self.attn(q, kv, kv, mask)
-        x = x + self.mlp(self.ln_beforeFFN(x))
+        # x = x + self.mlp(self.ln_beforeFFN(x))
 
         x = x.transpose(1, 2).view(bs, c, h, w)
 

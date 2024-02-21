@@ -125,14 +125,14 @@ class CrossTransformerBlock(nn.Module):
         super().__init__()
         self.ln_begin_kv = nn.LayerNorm(n_embd)
         self.ln_begin_q = nn.LayerNorm(q_n_embd)
-        self.ln_beforeFFN = nn.LayerNorm(n_embd)
+        # self.ln_beforeFFN = nn.LayerNorm(n_embd)
         self.attn = CrossAttention(n_embd, q_n_embd, n_head, attn_pdrop, resid_pdrop)
-        self.mlp = nn.Sequential(
-            nn.Linear(n_embd, block_exp * n_embd),
-            nn.ReLU(True), # changed from GELU
-            nn.Linear(block_exp * n_embd, n_embd),
-            nn.Dropout(resid_pdrop),
-        )
+        # self.mlp = nn.Sequential(
+        #     nn.Linear(n_embd, block_exp * n_embd),
+        #     nn.ReLU(True), # changed from GELU
+        #     nn.Linear(block_exp * n_embd, n_embd),
+        #     nn.Dropout(resid_pdrop),
+        # )
 
     def forward(self, q, kv, mask=None):
 
@@ -146,7 +146,7 @@ class CrossTransformerBlock(nn.Module):
         q = self.ln_begin_q(q)
         
         x = kv + self.attn(q, kv, kv, mask)
-        x = x + self.mlp(self.ln_beforeFFN(x))
+        # x = x + self.mlp(self.ln_beforeFFN(x))
 
         x = x.transpose(1, 2).view(bs, c, h, w)
 
@@ -281,7 +281,6 @@ class PIDController(object):
 class GRUWaypointsPredictor(nn.Module):
     def __init__(self, input_dim, waypoints=10):
         super().__init__()
-        # self.gru = torch.nn.GRUCell(input_size=input_dim, hidden_size=64)
         self.gru = torch.nn.GRU(input_size=input_dim, hidden_size=64, batch_first=True)
         self.encoder = nn.Linear(2, 64)
         self.decoder = nn.Linear(64, 2)
@@ -320,33 +319,13 @@ class VitFuser(nn.Module):
                             attn_pdrop=0.0,
                             resid_pdrop=0.0).to(self.device)
 
-        self.downsample = nn.Sequential(
+        self.predictor = GRUWaypointsPredictor(192, waypoints=config.pred_len).to(self.device)
+        self.brake_predictor = nn.Sequential(
                             nn.Linear(192, 64),
                             nn.ReLU(inplace=True),
-                        ).to(self.device)
-        self.predictor = GRUWaypointsPredictor(64, waypoints=config.pred_len).to(self.device)
-        # self.out = nn.Sequential(
-        #                     nn.Linear(192, 64),
-        #                     nn.ReLU(inplace=True),
-        #                     nn.Linear(64, 16),
-        #                     nn.ReLU(inplace=True),
-        #                     nn.Linear(16, 2)
-        #                 ).to(self.device)
-        self.control_embed = nn.Sequential(
-                            nn.Linear(384, 192),
-                            nn.ReLU(inplace=True),
-                            nn.Linear(192, 64),
-                            nn.ReLU(inplace=True),
-                        ).to(self.device)
-        self.acc_predictor = nn.Sequential(
                             nn.Linear(64, 16),
                             nn.ReLU(inplace=True),
-                            nn.Linear(16, 1),
-                        ).to(self.device)
-        self.steer_predictor = nn.Sequential(
-                            nn.Linear(64, 16),
-                            nn.ReLU(inplace=True),
-                            nn.Linear(16, 1),
+                            nn.Linear(16, 2),
                         ).to(self.device)
 
     def forward(self, image_list, lidar_list, target_point, velocity, command):
@@ -361,25 +340,12 @@ class VitFuser(nn.Module):
         image_feature, lidar_feature = self.encoder(image_list, lidar_list)
         fused_features = self.decoder(image_feature, lidar_feature, target_point, velocity, command)
         predict_features = fused_features[:,-self.pred_len:,:] # predict last 4 waypoints
-        z = self.downsample(predict_features)
-        pred_wp = self.predictor(z, target_point)
+        sensor_features = fused_features[:,:32,:]
+        pred_wp = self.predictor(predict_features, target_point)
 
-        control_features = fused_features[:,-self.pred_len-3:-self.pred_len-1,:].flatten(start_dim=1)
-        control_features = self.control_embed(control_features)
-        pred_acc = self.acc_predictor(control_features)
-        pred_steer = self.steer_predictor(control_features)
+        pred_brake = self.brake_predictor(sensor_features.mean(1))
 
-        # pred_throttle = torch.clamp(pred_acc, min=0, max=1)
-        # pred_brake = (pred_acc < 0).float()
-
-        # pred_dx = self.out(predict_features)
-        # pred_wp = list()
-        # x = torch.zeros(size=(pred_dx.shape[0], 2), dtype=pred_dx.dtype).to(self.device)
-        # for i in range(self.pred_len):
-        #     x = x + pred_dx[:,i,:]
-        #     pred_wp.append(x)
-        # pred_wp = torch.stack(pred_wp, dim=1)
-        return pred_wp, pred_steer.squeeze(), pred_acc.squeeze()
+        return pred_wp, pred_brake
 
     def control_pid(self, waypoints, velocity, target):
         ''' Predicts vehicle control with a PID controller.
@@ -460,95 +426,3 @@ class VitFuser(nn.Module):
 
         return steer, throttle, brake, metadata
 
-    # def control_pid(self, waypoints, velocity):
-    #     ''' 
-    #     Predicts vehicle control with a PID controller.
-    #     Args:
-    #         waypoints (tensor): predicted waypoints
-    #         velocity (tensor): speedometer input
-    #     '''
-    #     assert(waypoints.size(0)==1)
-    #     waypoints = waypoints[0].data.cpu().numpy()
-
-    #     # flip y is (forward is negative in our waypoints)
-    #     waypoints[:,1] *= -1
-    #     speed = velocity[0].data.cpu().numpy()
-
-    #     desired_speed = np.linalg.norm(waypoints[0] - waypoints[1]) * 2.0
-    #     brake = desired_speed < self.config.brake_speed or (speed / desired_speed) > self.config.brake_ratio
-
-    #     aim = (waypoints[1] + waypoints[0]) / 2.0
-    #     angle = np.degrees(np.pi / 2 - np.arctan2(aim[1], aim[0])) / 90
-    #     if(speed < 0.01):
-    #         angle = np.array(0.0) # When we don't move we don't want the angle error to accumulate in the integral
-    #     steer = self.turn_controller.step(angle)
-    #     steer = np.clip(steer, -1.0, 1.0)
-
-    #     delta = np.clip(desired_speed - speed, 0.0, self.config.clip_delta)
-    #     throttle = self.speed_controller.step(delta)
-    #     throttle = np.clip(throttle, 0.0, self.config.max_throttle)
-    #     throttle = throttle if not brake else 0.0
-
-    #     metadata = {
-    #         'speed': float(speed.astype(np.float64)),
-    #         'steer': float(steer),
-    #         'throttle': float(throttle),
-    #         'brake': float(brake),
-    #         'wp_2': tuple(waypoints[1].astype(np.float64)),
-    #         'wp_1': tuple(waypoints[0].astype(np.float64)),
-    #         'desired_speed': float(desired_speed.astype(np.float64)),
-    #         'angle': float(angle.astype(np.float64)),
-    #         'aim': tuple(aim.astype(np.float64)),
-    #         'delta': float(delta.astype(np.float64)),
-    #     }
-
-    #     return steer, throttle, brake, metadata
-
-# from config import GlobalConfig
-# config = GlobalConfig()
-
-# image = torch.randn(1, 3, 256, 256)
-# lidar = torch.randn(1, 2, 256, 256)
-# velocity = torch.randn(1)
-# target_point = torch.randn(1,2)
-
-
-# model = Encoder(config)
-# print(model)
-# out = model([image], [lidar])
-# print(out[0].shape, out[1].shape)
-# flops, params = profile(model, inputs=([image], [lidar]))
-# flops, params = clever_format([flops, params], "%.3f")
-# print(f'flops: {flops}, params: {params}')
-
-# model = Fuser(n_embd=192,
-#                 depth=4,
-#                 n_head=4,
-#                 block_exp=4,
-#                 attn_pdrop=0.0,
-#                 resid_pdrop=0.0)
-# feature = model(out[0], out[1], veloc)
-# print(feature.shape)
-# flops, params = profile(model, inputs=(out[0], out[1], veloc))
-# flops, params = clever_format([flops, params], "%.3f")
-# print(f'flops: {flops}, params: {params}')
-
-# model = VitFuser(config, 'cpu')
-# print(model)
-# out = model([image], [lidar], target_point, velocity)
-# print(out.shape)
-# flops, params = profile(model, inputs=([image], [lidar], target_point, velocity))
-# flops, params = clever_format([flops, params], "%.3f")
-# print(f'flops: {flops}, params: {params}')
-
-# import time
-# REPEAT = 1000
-# for _ in range(100):
-# 	pred_wp = model([image], [lidar], target_point, velocity)
-# # speed test
-# time_start = time.time()
-# for _ in range(REPEAT):
-# 	pred_wp = model([image], [lidar], target_point, velocity)
-# 	torch.cuda.synchronize()
-# time_end = time.time()
-# print('latency: ', (time_end-time_start)/REPEAT * 1000, 'ms')

@@ -12,7 +12,7 @@ import torch.nn.functional as F
 torch.backends.cudnn.benchmark = True
 
 from config import GlobalConfig
-from model_decoder_control2 import VitFuser
+from model_decoder_control import VitFuser
 from data import CARLA_Data
 from utils import load_weight
 torch.cuda.empty_cache()
@@ -88,29 +88,25 @@ class Engine(object):
                 gt_velocity = data['velocity'].to(args.device, dtype=torch.float32)
                 gt_steer = data['steer'].to(args.device, dtype=torch.float32)
                 gt_throttle = data['throttle'].to(args.device, dtype=torch.float32)
-                gt_brake = data['brake'].to(args.device, dtype=torch.float32)
+                gt_brake = data['brake'].to(args.device, dtype=torch.long)
 
                 # target point
                 target_point = torch.stack(data['target_point'], dim=1).to(args.device, dtype=torch.float32)
                 
-                pred_wp, pred_steer, pred_acc = model(fronts+lefts+rights+rears, lidars, target_point, gt_velocity, command)
-                pred_throttle = torch.clamp(pred_acc, min=0, max=1)
-                pred_brake = torch.clamp(-pred_acc, min=0, max=1)
+                pred_wp, pred_brake = model(fronts+lefts+rights+rears, lidars, target_point, gt_velocity, command)
 
                 gt_waypoints = [torch.stack(data['waypoints'][i], dim=1).to(args.device, dtype=torch.float32) for i in range(config.seq_len, len(data['waypoints']))]
                 gt_waypoints = torch.stack(gt_waypoints, dim=1).to(args.device, dtype=torch.float32)
                 
                 wp_loss = F.l1_loss(pred_wp, gt_waypoints, reduction='none').mean()
-                steer_loss = F.mse_loss(pred_steer, gt_steer) 
-                throttle_loss = F.mse_loss(pred_throttle, gt_throttle)
-                brake_loss = F.mse_loss(pred_brake, gt_brake)
-                loss = wp_loss * config.wp_weight  + steer_loss * config.steer_weight + throttle_loss * config.throttle_weight + brake_loss * config.brake_weight
+                brake_loss = F.cross_entropy(pred_brake, gt_brake)
+                loss = wp_loss * config.wp_weight  + brake_loss * config.brake_weight
                 loss.backward()
                 loss_epoch += float(loss.item())
 
                 num_batches += 1
                 optimizer.step()
-                tqdm.set_postfix(tbar, {"loss" : loss.item(), "wp_loss" : wp_loss.item(), "steer_loss": steer_loss.item(), "throttle_loss": throttle_loss.item(), "brake_loss" : brake_loss.item(),  "iters" :self.cur_iter})
+                tqdm.set_postfix(tbar, {"loss" : loss.item(), "wp_loss" : wp_loss.item(), "brake_loss" : brake_loss.item(),  "iters" :self.cur_iter})
                 writer.add_scalar('train_loss', loss.item(), self.cur_iter)
                 self.cur_iter += 1
             
@@ -127,6 +123,8 @@ class Engine(object):
             wp_epoch = 0.
 
             # Validation loop
+            data_num = 0
+            correct_pred_num = 0
             for batch_num, data in enumerate(tqdm(dataloader_val), 0):
                 
                 # create batch and move to GPU
@@ -154,29 +152,31 @@ class Engine(object):
                 gt_velocity = data['velocity'].to(args.device, dtype=torch.float32)
                 gt_steer = data['steer'].to(args.device, dtype=torch.float32)
                 gt_throttle = data['throttle'].to(args.device, dtype=torch.float32)
-                gt_brake = data['brake'].to(args.device, dtype=torch.float32)
+                gt_brake = data['brake'].to(args.device, dtype=torch.long)
 
                 # target point
                 target_point = torch.stack(data['target_point'], dim=1).to(args.device, dtype=torch.float32)
 
-                pred_wp, pred_steer, pred_acc = model(fronts+lefts+rights+rears, lidars, target_point, gt_velocity, command)
-                pred_throttle = torch.clamp(pred_acc, min=0, max=1)
-                pred_brake = torch.clamp(-pred_acc, min=0, max=1)
+                pred_wp, pred_brake = model(fronts+lefts+rights+rears, lidars, target_point, gt_velocity, command)
 
                 gt_waypoints = [torch.stack(data['waypoints'][i], dim=1).to(args.device, dtype=torch.float32) for i in range(config.seq_len, len(data['waypoints']))]
                 gt_waypoints = torch.stack(gt_waypoints, dim=1).to(args.device, dtype=torch.float32)
                 
                 wp_loss = F.l1_loss(pred_wp, gt_waypoints, reduction='none').mean()
-                steer_loss = F.mse_loss(pred_steer, gt_steer) 
-                throttle_loss = F.mse_loss(pred_throttle, gt_throttle)
-                brake_loss = F.mse_loss(pred_brake, gt_brake)
-                loss = wp_loss * config.wp_weight  + steer_loss * config.steer_weight + throttle_loss * config.throttle_weight + brake_loss * config.brake_weight
+                brake_loss = F.cross_entropy(pred_brake, gt_brake)
+
+                pred_brake_result = torch.argmax(pred_brake, dim=1)
+                correct_pred_num += torch.sum(pred_brake_result == gt_brake).item()
+                data_num += len(gt_brake)
+                accuracy = correct_pred_num / data_num
+
+                loss = wp_loss * config.wp_weight  + brake_loss * config.brake_weight
                 wp_epoch += float(loss.mean())
 
                 num_batches += 1
                     
             wp_loss = wp_epoch / float(num_batches)
-            tqdm.write(f'Epoch {self.cur_epoch:03d}, Batch {batch_num:03d}:' + f' Wp: {wp_loss:3.3f}')
+            tqdm.write(f'Epoch {self.cur_epoch:03d}, Batch {batch_num:03d}:' + f' Wp: {wp_loss:3.3f}', + f' Accuracy: {accuracy:3.3f}')
 
             writer.add_scalar('val_loss', wp_loss, self.cur_epoch)
             
