@@ -179,11 +179,18 @@ if __name__ == "__main__":
 	dataloader_val = DataLoader(val_set, batch_size=args.batch_size, shuffle=False, num_workers=8)
 
 	TCP_model = TCP_planner(config, args.lr)
+	ckpt_path = None
 	if args.load_weights is not None:
 		print(f"load weights from {args.load_weights}")
 		TCP_model.load_state_dict(torch.load(args.load_weights), strict=False)
 
-	os.makedirs(args.logdir, exist_ok=True)
+	if not os.path.isdir(args.logdir):
+		os.makedirs(args.logdir, exist_ok=True)
+		print('Created dir:', args.logdir)
+	elif os.path.isfile(os.path.join(args.logdir, 'recent.log')):
+		print('Loading checkpoint from ' + args.logdir)
+		ckpt_path = os.path.join(args.logdir, 'last.ckpt')
+
 	with open(os.path.join(args.logdir, "model_config.txt"), 'w') as f:
 		f.write(str(TCP_model.model))
 		f.write('\n\n===============================\n\n')
@@ -196,7 +203,7 @@ if __name__ == "__main__":
 
 	checkpoint_callback = ModelCheckpoint(save_weights_only=False, mode="min", monitor="val_loss", save_top_k=2, save_last=True,
 											dirpath=args.logdir, filename="best_{epoch:02d}-{val_loss:.3f}")
-	checkpoint_callback.CHECKPOINT_NAME_LAST = "{epoch}-last"
+	checkpoint_callback.CHECKPOINT_NAME_LAST = "last"
 	trainer = pl.Trainer.from_argparse_args(args,
 											default_root_dir=args.logdir,
 											gpus = args.gpus,
@@ -211,11 +218,11 @@ if __name__ == "__main__":
 														],
 											check_val_every_n_epoch = args.val_every,
 											max_epochs = args.epochs,
-											logger=CSVLogger(args.logdir, name=args.id)
+											logger=CSVLogger(args.logdir, name=args.id),
 											)
 	
 
-	trainer.fit(TCP_model, dataloader_train, dataloader_val)
+	trainer.fit(TCP_model, dataloader_train, dataloader_val, ckpt_path=ckpt_path)
 
 
 
