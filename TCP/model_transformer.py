@@ -9,8 +9,8 @@ import torch.nn.functional as F
 from thop import profile
 from thop import clever_format
 
-from efficientvit import EfficientViT, EfficientViT_m0, EfficientViT_m1, EfficientViT_m2, EfficientViT_m3, replace_batchnorm
-from utils import load_weight
+from .efficientvit import EfficientViT, EfficientViT_m0, EfficientViT_m1, EfficientViT_m2, EfficientViT_m3, replace_batchnorm
+from .utils import load_weight
 
 torch.autograd.set_detect_anomaly(True)
 
@@ -163,10 +163,10 @@ class Encoder(nn.Module):
         super(Encoder, self).__init__()
         self.config = config
         self.n_view = 2
-        self.f_image_encoder = EfficientViT(in_chans=3, **EfficientViT_m1) # f for front
-        self.f_image_encoder = load_weight(self.f_image_encoder, torch.load('/home/gyp/program/my_transfuser/transfuser/model_ckpt/efficientvit/efficientvit_m1.pth')["model"],strict=False)
-        self.lr_image_encoder = EfficientViT(in_chans=3, **EfficientViT_m0) # lr for left and right
-        self.lr_image_encoder = load_weight(self.lr_image_encoder, torch.load('/home/gyp/program/my_transfuser/transfuser/model_ckpt/efficientvit/efficientvit_m0.pth')["model"],strict=False)
+        self.f_image_encoder = EfficientViT(in_chans=6, **EfficientViT_m1) # f for front
+        self.f_image_encoder = load_weight(self.f_image_encoder, torch.load('/home/yipin/program/transfuser/model_ckpt/efficientvit/efficientvit_m1.pth')["model"],strict=False)
+        self.lr_image_encoder = EfficientViT(in_chans=6, **EfficientViT_m0) # lr for left and right
+        self.lr_image_encoder = load_weight(self.lr_image_encoder, torch.load('/home/yipin/program/transfuser/model_ckpt/efficientvit/efficientvit_m0.pth')["model"],strict=False)
 
         self.cross_attn_f1 = CrossTransformerBlock(128, 64, n_head=2)
         self.cross_attn_f2 = CrossTransformerBlock(144, 128, n_head=4)
@@ -415,7 +415,7 @@ class VitFuser(nn.Module):
 
         return out
 
-    def process_action(self, pred, command, speed, target_point):
+    def process_action(self, pred):
         action = self._get_action_beta(pred['mu_branches'].view(1,2), pred['sigma_branches'].view(1,2))
         acc, steer = action.cpu().numpy()[0].astype(np.float64)
         if acc >= 0.0:
@@ -430,12 +430,9 @@ class VitFuser(nn.Module):
         brake = np.clip(brake, 0, 1)
 
         metadata = {
-            'speed': float(speed.cpu().numpy().astype(np.float64)),
             'steer': float(steer),
             'throttle': float(throttle),
             'brake': float(brake),
-            'command': command,
-            'target_point': tuple(target_point[0].data.cpu().numpy().astype(np.float64)),
         }
         return steer, throttle, brake, metadata
 
