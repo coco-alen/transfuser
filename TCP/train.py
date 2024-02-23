@@ -191,6 +191,8 @@ if __name__ == "__main__":
     else:
         print('Loading checkpoint from ' + args.logdir)
         ckpt_path = os.path.join(args.logdir, 'last.ckpt')
+        if not os.path.isfile(ckpt_path):
+            ckpt_path = None
 
     with open(os.path.join(args.logdir, "model_config.txt"), 'w') as f:
         f.write(str(TCP_model.model))
