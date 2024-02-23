@@ -14,7 +14,7 @@ from pytorch_lightning.loggers import CSVLogger
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.plugins import DDPPlugin
 
-from model_transformer import VitFuser
+from model_tinyvit import VitFuser
 from data_new import CARLA_Data
 from config import GlobalConfig
 
@@ -176,6 +176,8 @@ if __name__ == "__main__":
     else:
         print('Loading checkpoint from ' + args.logdir)
         ckpt_path = os.path.join(args.logdir, 'last.ckpt')
+        if not os.path.isfile(ckpt_path):
+            ckpt_path = None
 
     with open(os.path.join(args.logdir, "model_config.txt"), 'w') as f:
         f.write(str(TCP_model.model))

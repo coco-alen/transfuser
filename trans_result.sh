@@ -1,0 +1,1 @@
+python ./leaderboard/scripts/pretty_print_json.py -f result.json -o result.out
