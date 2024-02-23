@@ -18,6 +18,8 @@ from model_transformer import VitFuser
 from data_new import CARLA_Data
 from config import GlobalConfig
 
+from utils import load_weight
+
 
 class TCP_planner(pl.LightningModule):
     def __init__(self, config, lr):
@@ -164,8 +166,8 @@ if __name__ == "__main__":
 
     TCP_model = TCP_planner(config, args.lr)
     if args.load_weights is not None:
-        print(f"load weights from {args.load_weights}")
-        TCP_model.load_state_dict(torch.load(args.load_weights), strict=False)
+        state_dict = torch.load(args.load_weights)
+        load_weight(TCP_model, state_dict, strict=False)
 
     if not os.path.isdir(args.logdir):
         os.makedirs(args.logdir, exist_ok=True)
