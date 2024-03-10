@@ -17,7 +17,8 @@ from pytorch_lightning.plugins import DDPPlugin
 from model import TCP
 from data import CARLA_Data
 from config import GlobalConfig
-
+from quanted_op import quantize_model
+from utils import load_weight
 
 class TCP_planner(pl.LightningModule):
     def __init__(self, config, lr):
@@ -162,6 +163,9 @@ if __name__ == "__main__":
     parser.add_argument('--logdir', type=str, default='log', help='Directory to log data to.')
     parser.add_argument('--gpus', type=int, default=1, help='number of gpus')
     parser.add_argument('--load_weights', type=str, default=None, help='path to load model')
+    parser.add_argument('--w_bits', type=int, default=32, help='data bit of weight')
+    parser.add_argument('--a_bits', type=int, default=32, help='data bit of activation')
+    parser.add_argument('--symmetric', action='store_true', help='symmetric quantization')
 
     args = parser.parse_args()
     args.logdir = os.path.join(args.logdir, args.id)
@@ -182,7 +186,13 @@ if __name__ == "__main__":
     ckpt_path = None
     if args.load_weights is not None:
         print(f"load weights from {args.load_weights}")
-        TCP_model.load_state_dict(torch.load(args.load_weights), strict=False)
+        state_dict = torch.load(args.load_weights)
+        load_weight(TCP_model, state_dict["state_dict"], strict=False)
+    if args.w_bits < 32 or args.a_bits < 32:
+        TCP_model.model = quantize_model(TCP_model.model,
+                                         w_bits=args.w_bits,
+                                        a_bits=args.a_bits,
+                                        symmetric=args.symmetric,)
 
     if not os.path.isdir(args.logdir):
         os.makedirs(args.logdir, exist_ok=True)
