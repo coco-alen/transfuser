@@ -1,7 +1,12 @@
+import os
+import time
+
 import torch
 import torch.nn as nn
+from thop import profile
+from thop import clever_format
 
-from efficientvit import EfficientViT
+from efficientvit import EfficientViT, EfficientViT_m0, EfficientViT_m1, EfficientViT_m2, EfficientViT_m3, EfficientViT_m4, EfficientViT_m5
 from tinyvit import TinyViT
 from pvt import PyramidVisionTransformerV2
 from model import CrossTransformerBlock
@@ -23,42 +28,41 @@ from model import CrossTransformerBlock
 #                 sr_ratios=[8, 4, 2, 1], 
 #                 num_stages=4, linear=False)
 
-# print(model)
 
-# image_input = torch.randn(1, 3, 256, 256)
-# out = model(image_input)
-# print(out.shape)
+# model = EfficientViT(img_size=256,
+#                  patch_size=16,
+#                  in_chans=3,
+#                  stages=['s', 's', 's'],
+#                  embed_dim=[64, 128, 192],
+#                  key_dim=[16, 16, 16],
+#                  depth=[1, 2, 3],
+#                  num_heads=[4, 4, 4],
+#                  window_size=[7, 7, 7],
+#                  kernels=[5, 5, 5, 5],
+#                  down_ops=[['subsample', 2], ['subsample', 2], ['']])
+model = EfficientViT(**EfficientViT_m5)
+print(model)
+REPEAT = 1000
 
-
-# model = CrossTransformerBlock(
-#     n_embd = 196, 
-#     q_n_embd = 128, 
-#     n_head=4, 
-#     block_exp=4, 
-#     attn_pdrop=.0,
-#     resid_pdrop=.0)
-
-# q = torch.randn(1, 128, 16, 16)
-# kv = torch.randn(1, 196, 8, 8)
-
-# out = model(q, kv)
-# print(out.shape)
-
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-
-from thop import profile
-from thop import clever_format
-
-model = nn.GRU(input_size=192, hidden_size=64, batch_first=True)
-input = torch.randn(1, 4, 192)
-emb = nn.Embedding(7, 192)
-
-flops, params = profile(model, inputs=[input])
-flops, params = clever_format([flops, params], "%.3f")
-print(flops, params)
-
-flops, params = profile(emb, inputs=[torch.randint(0,6,[1])])
-flops, params = clever_format([flops, params], "%.3f")
-print(flops, params)
+image_input = torch.randn(1, 3, 256, 256)
+feature = model.patch_embed(image_input)
+print(feature.shape)
+feature = model.blocks1(feature)
+print(feature.shape)
+feature = model.blocks2(feature)
+print(feature.shape)
+feature = model.blocks3(feature)
+print(feature.shape)
+# flops, params = profile(model, inputs=[image_input])
+# flops, params = clever_format([flops, params], "%.3f")
+# print(f'flops: {flops}, params: {params}')
+# # warm up
+# for _ in range(100):
+# 	pred_wp = model(image_input)
+# # speed test
+# time_start = time.time()
+# for _ in range(REPEAT):
+# 	pred_wp = model(image_input)
+# 	torch.cuda.synchronize()
+# time_end = time.time()
+# print('latency: ', (time_end-time_start)/REPEAT * 1000, 'ms')

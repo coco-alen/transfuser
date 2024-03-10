@@ -9,7 +9,7 @@ import torch.nn.functional as F
 from thop import profile
 from thop import clever_format
 
-from .efficientvit import EfficientViT, EfficientViT_m0, EfficientViT_m1, EfficientViT_m2, EfficientViT_m3, replace_batchnorm
+from .efficientvit import EfficientViT, EfficientViT_m0, EfficientViT_m1, EfficientViT_m2, EfficientViT_m3, EfficientViT_m4, EfficientViT_m5
 from .utils import load_weight
 
 torch.autograd.set_detect_anomaly(True)
@@ -321,9 +321,10 @@ class VitFuser(nn.Module):
         self.turn_controller = PIDController(K_P=config.turn_KP, K_I=config.turn_KI, K_D=config.turn_KD, n=config.turn_n)
         self.speed_controller = PIDController(K_P=config.speed_KP, K_I=config.speed_KI, K_D=config.speed_KD, n=config.speed_n)
 
+        embed_dim = 192
         self.encoder = Encoder(config).to(self.device)
-        self.decoder = Decoder(n_embd=192,
-                            depth=8,
+        self.decoder = Decoder(n_embd=embed_dim,
+                            depth=4,
                             token_num=35,
                             pred_len=config.pred_len,
                             n_head=4,
@@ -332,23 +333,14 @@ class VitFuser(nn.Module):
                             resid_pdrop=0.1).to(self.device)
         
         self.speed_predictor = nn.Sequential(
-                        nn.Linear(192, 64),
+                        nn.Linear(embed_dim, 64),
                         nn.ReLU(inplace=True),
                         nn.Linear(64, 1),
                     ).to(self.device)
         
-        self.wp_predictor = GRUWaypointsPredictor(192, waypoints=config.pred_len).to(self.device)
-        # self.wp_predictor = nn.Sequential(
-        #                     nn.Dropout2d(p=0.1),
-        #                     nn.Linear(192, 64),
-        #                     nn.ReLU(inplace=True),
-        #                     nn.Linear(64, 16),
-        #                     nn.ReLU(inplace=True),
-        #                     nn.Linear(16, 2)
-        #                 ).to(self.device)
-        
+        self.wp_predictor = GRUWaypointsPredictor(embed_dim, waypoints=config.pred_len).to(self.device)
         self.neck = nn.Sequential(
-                nn.Linear(192, 256),
+                nn.Linear(embed_dim, 256),
                 nn.ReLU(inplace=True),
             ).to(self.device)
         
