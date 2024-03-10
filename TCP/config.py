@@ -11,14 +11,20 @@ class GlobalConfig:
 	# data root
 	root_dir_all = "/DATA1/yipin/dataset/tcp/tcp_carla_data"
 
-	train_towns = ['town01', 'town03', 'town04',  'town06', ]
-	val_towns = ['town02', 'town05', 'town07', 'town10']
+	train_towns = ['town02', 'town07', 'town10', 'town01', 'town03', 'town04',  'town06']
+	val_towns = ['town05']
+	# train_towns = ['town01', 'town03', 'town04',  'town06']
+	# val_towns = ['town02', 'town05', 'town07', 'town10']
 	train_data, val_data = [], []
 	for town in train_towns:		
 		train_data.append(os.path.join(root_dir_all, town))
-		train_data.append(os.path.join(root_dir_all, town+'_addition'))
+		if town not in ['town02', 'town07']:
+			train_data.append(os.path.join(root_dir_all, town+'_addition'))
 	for town in val_towns:
 		val_data.append(os.path.join(root_dir_all, town+'_val'))
+
+		val_data.append(os.path.join(root_dir_all, town))
+		val_data.append(os.path.join(root_dir_all, town+'_addition'))
 
 	ignore_sides = True # don't consider side cameras
 	ignore_rear = True # don't consider rear cameras
@@ -51,12 +57,11 @@ class GlobalConfig:
 	angle_thresh = 0.3 # outlier control detection angle
 	dist_thresh = 10 # target point y-distance for outlier filtering
 
-
 	speed_weight = 0.05
 	value_weight = 0.001
 	features_weight = 0.05
 
-	rl_ckpt = "roach/log/ckpt_11833344.pth"
+	rl_ckpt = "/home/gyp/program/TCP/roach/log/ckpt_11833344.pth"
 
 	img_aug = True
 

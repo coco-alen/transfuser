@@ -176,7 +176,7 @@ class Engine(object):
                 num_batches += 1
                     
             wp_loss = wp_epoch / float(num_batches)
-            tqdm.write(f'Epoch {self.cur_epoch:03d}, Batch {batch_num:03d}:' + f' Wp: {wp_loss:3.3f}', + f' Accuracy: {accuracy:3.3f}')
+            tqdm.write(f'Epoch {self.cur_epoch:03d}, Batch {batch_num:03d}:' + f' Wp: {wp_loss:3.3f}' + f' Accuracy: {accuracy:3.3f}')
 
             writer.add_scalar('val_loss', wp_loss, self.cur_epoch)
             

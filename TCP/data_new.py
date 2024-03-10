@@ -5,7 +5,7 @@ import torch
 from torch.utils.data import Dataset
 from torchvision import transforms as T
 
-from augment import hard as augmenter
+from .augment import hard as augmenter
 
 class CARLA_Data(Dataset):
 
@@ -122,6 +122,7 @@ class CARLA_Data(Dataset):
 		data['action'] = self.action[index]
 		data['action_mu'] = self.action_mu[index]
 		data['action_sigma'] = self.action_sigma[index]
+		data["should_brake"] = np.array(data['action'][2] > 0.1, dtype=np.int64)
 
 
 		future_only_ap_brake = self.future_only_ap_brake[index]
@@ -173,7 +174,7 @@ class CARLA_Data(Dataset):
 			command = 4
 		command -= 1
 		assert command in [0, 1, 2, 3, 4, 5]
-		data['target_command'] = torch.tensor(command, dtype=torch.int)		
+		data['target_command'] = torch.tensor(command, dtype=torch.float)		
 
 		self._batch_read_number += 1
 		return data

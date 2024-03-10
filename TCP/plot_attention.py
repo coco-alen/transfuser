@@ -38,17 +38,17 @@ def find_and_register_hook(module, hook_function):
         for child in module.children():
             find_and_register_hook(child, hook_function)
 
-# attention = []
-# config = GlobalConfig()
-# val_set = CARLA_Data(root=config.root_dir_all, data_folders=config.val_data)
-# model = Model()
-# weights = torch.load("/home/yipin/program/transfuser/TCP/log/vitfuser_biggerDecoder/best_epoch=55-val_loss=0.897.ckpt")
-# load_weight(model, weights["state_dict"], strict=True)
-# find_and_register_hook(model, hook_function=get_attention_hook)
-# data = val_set[653]
-# output = model(data)
-# with open("attention.pickle", "wb") as f:
-#     pickle.dump(attention, f)
+attention = []
+config = GlobalConfig()
+val_set = CARLA_Data(root=config.root_dir_all, data_folders=config.val_data)
+model = Model()
+weights = torch.load("/home/gyp/program/my_transfuser/transfuser/TCP/log/vitfuser/best_epoch=52-val_loss=0.784.ckpt")
+load_weight(model, weights["state_dict"], strict=True)
+find_and_register_hook(model, hook_function=get_attention_hook)
+data = val_set[653]
+output = model(data)
+with open("attention.pickle", "wb") as f:
+    pickle.dump(attention, f)
 
 def visualize_attention(attention_weights, path):
     # 将attention权重转换为numpy数组
@@ -84,11 +84,11 @@ with open("attention.pickle", "rb") as f:
 
 os.makedirs("attention_map", exist_ok=True)
 
-# for i in tqdm(range(len(attention))):
-#     attention_value = attention[i][0]
-#     for j in range(attention_value.shape[0]):
-#         visualize_attention(attention_value[j], f"attention_map/{i}_{j}.png")
-#     visualize_attention(np.sum(attention_value,axis=0), f"attention_map/{i}.png")
+for i in tqdm(range(len(attention))):
+    attention_value = attention[i][0]
+    for j in range(attention_value.shape[0]):
+        visualize_attention(attention_value[j], f"attention_map/{i}_{j}.png")
+    visualize_attention(np.sum(attention_value,axis=0), f"attention_map/{i}.png")
 
 attention_value = np.sum(sum(attention)[0],axis=0)
 visualize_attention(attention_value, f"attention_map/sum.png")

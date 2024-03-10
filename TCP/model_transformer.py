@@ -50,7 +50,7 @@ class SelfAttention(nn.Module):
 
         # output projection
         y = self.resid_drop(self.proj(y))
-        return y
+        return y, att
 
 class CrossAttention(nn.Module):
     """
@@ -114,7 +114,7 @@ class TransformerBlock(nn.Module):
         )
 
     def forward(self, x):
-        x = x + self.attn(self.ln1(x))
+        x = x + self.attn(self.ln1(x))[0]
         x = x + self.mlp(self.ln2(x))
         return x
 
@@ -163,10 +163,10 @@ class Encoder(nn.Module):
         super(Encoder, self).__init__()
         self.config = config
         self.n_view = 2
-        self.f_image_encoder = EfficientViT(in_chans=6, **EfficientViT_m1) # f for front
-        self.f_image_encoder = load_weight(self.f_image_encoder, torch.load('/home/yipin/program/transfuser/model_ckpt/efficientvit/efficientvit_m1.pth')["model"],strict=False)
-        self.lr_image_encoder = EfficientViT(in_chans=6, **EfficientViT_m0) # lr for left and right
-        self.lr_image_encoder = load_weight(self.lr_image_encoder, torch.load('/home/yipin/program/transfuser/model_ckpt/efficientvit/efficientvit_m0.pth')["model"],strict=False)
+        self.f_image_encoder = EfficientViT(in_chans=3, **EfficientViT_m1) # f for front
+        # self.f_image_encoder = load_weight(self.f_image_encoder, torch.load('/home/yipin/program/transfuser/model_ckpt/efficientvit/efficientvit_m1.pth')["model"],strict=False)
+        self.lr_image_encoder = EfficientViT(in_chans=3, **EfficientViT_m0) # lr for left and right
+        # self.lr_image_encoder = load_weight(self.lr_image_encoder, torch.load('/home/yipin/program/transfuser/model_ckpt/efficientvit/efficientvit_m0.pth')["model"],strict=False)
 
         self.cross_attn_f1 = CrossTransformerBlock(128, 64, n_head=2)
         self.cross_attn_f2 = CrossTransformerBlock(144, 128, n_head=4)
@@ -183,7 +183,7 @@ class Encoder(nn.Module):
         # assert len(lr_image_list) == 2, "Should have left and right view"
         f_image_list = [self.normalize_imagenet(image_input) for image_input in f_image_list]
         lr_image_list = [self.normalize_imagenet(image_input) for image_input in lr_image_list]
-        B, C, H, W = f_image_list[0].size()
+        # B, C, H, W = f_image_list[0].size()
         # f_image = torch.stack(f_image_list, dim=1).view(B * self.n_view, C, H, W)
         # lr_image = torch.stack(lr_image_list, dim=1).view(B * self.n_view, C, H, W)
 
@@ -338,6 +338,15 @@ class VitFuser(nn.Module):
                     ).to(self.device)
         
         self.wp_predictor = GRUWaypointsPredictor(192, waypoints=config.pred_len).to(self.device)
+        # self.wp_predictor = nn.Sequential(
+        #                     nn.Dropout2d(p=0.1),
+        #                     nn.Linear(192, 64),
+        #                     nn.ReLU(inplace=True),
+        #                     nn.Linear(64, 16),
+        #                     nn.ReLU(inplace=True),
+        #                     nn.Linear(16, 2)
+        #                 ).to(self.device)
+        
         self.neck = nn.Sequential(
                 nn.Linear(192, 256),
                 nn.ReLU(inplace=True),
@@ -358,6 +367,8 @@ class VitFuser(nn.Module):
         self.dist_mu = nn.Sequential(nn.Linear(256, 2), nn.Softplus()).to(self.device)
         self.dist_sigma = nn.Sequential(nn.Linear(256, 2), nn.Softplus()).to(self.device)
 
+        # self.brake_pred = nn.Sequential(nn.Linear(192, 2), nn.Softplus()).to(self.device)
+
     def forward(self, f_image_list, lr_image_list, target_point, velocity, command):
         '''
         Predicts waypoint from geometric feature projections of image + LiDAR input
@@ -376,8 +387,14 @@ class VitFuser(nn.Module):
         device = image_feature.device
         fused_features = self.decoder(image_feature, target_point, velocity, command)
         predict_features = fused_features[:,-self.pred_len-1:-1,:] # predict last 4 waypoints
+        # measure_features = fused_features[:,-self.pred_len-4:-self.pred_len-1,:]
+        # out["brake"] = self.brake_pred(measure_features.mean(1))
+
         pred_wp = self.wp_predictor(predict_features, target_point)
         out["pred_wp"] = pred_wp
+
+        # pred_wp = self.wp_predictor(predict_features)
+        # out["pred_wp"] = torch.cumsum(pred_wp, 1)
 
         control_features = fused_features[:,-1,:]
         control_features = self.neck(control_features)

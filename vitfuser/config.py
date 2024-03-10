@@ -69,10 +69,10 @@ class GlobalConfig:
     dist_thresh = 10 # target point y-distance for outlier filtering
 
     # train config
-    wp_weight = 0.5
-    steer_weight = 0.3
-    brake_weight = 0.1
-    throttle_weight = 0.2
+    wp_weight = 1.0
+    steer_weight = 5.0
+    brake_weight = 0.5
+    throttle_weight = 1.0
     img_aug = True
 
     def __init__(self, **kwargs):
