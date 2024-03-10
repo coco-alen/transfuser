@@ -206,7 +206,7 @@ class VitFuserAgent(autonomous_agent.AutonomousAgent):
                                         torch.FloatTensor([tick_data['target_point'][1]])]
         target_point = torch.stack(tick_data['target_point'], dim=1).to('cuda', dtype=torch.float32)
 
-        pred = self.net([front_img, focus_img], [left_img, right_img], target_point, speed, command)
+        pred = self.net([front_img], [focus_img], target_point, speed, command)
 
         steer_ctrl, throttle_ctrl, brake_ctrl, _ = self.net.process_action(pred)
 

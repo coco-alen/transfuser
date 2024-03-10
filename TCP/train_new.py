@@ -14,7 +14,7 @@ from pytorch_lightning.loggers import CSVLogger
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.plugins import DDPPlugin
 
-from model_tinyvit import VitFuser
+from model_transformer import VitFuser
 from data_new import CARLA_Data
 from config import GlobalConfig
 
@@ -161,13 +161,13 @@ if __name__ == "__main__":
     val_set = CARLA_Data(root=config.root_dir_all, data_folders=config.val_data,)
     print(len(val_set))
 
-    dataloader_train = DataLoader(train_set, batch_size=args.batch_size, shuffle=True, num_workers=8)
-    dataloader_val = DataLoader(val_set, batch_size=args.batch_size, shuffle=False, num_workers=8)
+    dataloader_train = DataLoader(train_set, batch_size=args.batch_size, shuffle=True, num_workers=4)
+    dataloader_val = DataLoader(val_set, batch_size=args.batch_size, shuffle=False, num_workers=4)
 
     TCP_model = TCP_planner(config, args.lr)
     if args.load_weights is not None:
         state_dict = torch.load(args.load_weights)
-        load_weight(TCP_model, state_dict, strict=False)
+        load_weight(TCP_model, state_dict["state_dict"], strict=False)
 
     if not os.path.isdir(args.logdir):
         os.makedirs(args.logdir, exist_ok=True)

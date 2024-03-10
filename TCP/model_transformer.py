@@ -9,7 +9,7 @@ import torch.nn.functional as F
 from thop import profile
 from thop import clever_format
 
-from .efficientvit import EfficientViT, EfficientViT_m0, EfficientViT_m1, EfficientViT_m2, EfficientViT_m3, replace_batchnorm
+from .efficientvit import EfficientViT, EfficientViT_m0, EfficientViT_m1, EfficientViT_m2, EfficientViT_m3, EfficientViT_m4, EfficientViT_m5
 from .utils import load_weight
 
 torch.autograd.set_detect_anomaly(True)
@@ -50,7 +50,7 @@ class SelfAttention(nn.Module):
 
         # output projection
         y = self.resid_drop(self.proj(y))
-        return y
+        return y, att
 
 class CrossAttention(nn.Module):
     """
@@ -114,7 +114,7 @@ class TransformerBlock(nn.Module):
         )
 
     def forward(self, x):
-        x = x + self.attn(self.ln1(x))
+        x = x + self.attn(self.ln1(x))[0]
         x = x + self.mlp(self.ln2(x))
         return x
 
@@ -163,11 +163,18 @@ class Encoder(nn.Module):
         super(Encoder, self).__init__()
         self.config = config
         self.n_view = 2
-        self.f_image_encoder = EfficientViT(in_chans=6, **EfficientViT_m1) # f for front
-        self.f_image_encoder = load_weight(self.f_image_encoder, torch.load('/home/yipin/program/transfuser/model_ckpt/efficientvit/efficientvit_m1.pth')["model"],strict=False)
-        self.lr_image_encoder = EfficientViT(in_chans=6, **EfficientViT_m0) # lr for left and right
-        self.lr_image_encoder = load_weight(self.lr_image_encoder, torch.load('/home/yipin/program/transfuser/model_ckpt/efficientvit/efficientvit_m0.pth')["model"],strict=False)
+        self.f_image_encoder = EfficientViT(in_chans=3, **EfficientViT_m1) # f for front
+        # self.f_image_encoder = load_weight(self.f_image_encoder, torch.load('/home/yipin/program/transfuser/model_ckpt/efficientvit/efficientvit_m5.pth')["model"],strict=False)
+        self.lr_image_encoder = EfficientViT(in_chans=3, **EfficientViT_m0) # lr for left and right
+        # self.lr_image_encoder = load_weight(self.lr_image_encoder, torch.load('/home/yipin/program/transfuser/model_ckpt/efficientvit/efficientvit_m4.pth')["model"],strict=False)
 
+        # self.cross_attn_f1 = CrossTransformerBlock(192, 128, n_head=2)
+        # self.cross_attn_f2 = CrossTransformerBlock(288, 256, n_head=4)
+        # self.cross_attn_f3 = CrossTransformerBlock(384, 384, n_head=8)
+
+        # self.cross_attn_lr1 = CrossTransformerBlock(128, 192, n_head=2)
+        # self.cross_attn_lr2 = CrossTransformerBlock(256, 288, n_head=4)
+        # self.cross_attn_lr3 = CrossTransformerBlock(384, 384, n_head=8)
         self.cross_attn_f1 = CrossTransformerBlock(128, 64, n_head=2)
         self.cross_attn_f2 = CrossTransformerBlock(144, 128, n_head=4)
         self.cross_attn_f3 = CrossTransformerBlock(192, 192, n_head=8)
@@ -321,9 +328,10 @@ class VitFuser(nn.Module):
         self.turn_controller = PIDController(K_P=config.turn_KP, K_I=config.turn_KI, K_D=config.turn_KD, n=config.turn_n)
         self.speed_controller = PIDController(K_P=config.speed_KP, K_I=config.speed_KI, K_D=config.speed_KD, n=config.speed_n)
 
+        embed_dim = 192
         self.encoder = Encoder(config).to(self.device)
-        self.decoder = Decoder(n_embd=192,
-                            depth=8,
+        self.decoder = Decoder(n_embd=embed_dim,
+                            depth=4,
                             token_num=35,
                             pred_len=config.pred_len,
                             n_head=4,
@@ -332,14 +340,14 @@ class VitFuser(nn.Module):
                             resid_pdrop=0.1).to(self.device)
         
         self.speed_predictor = nn.Sequential(
-                        nn.Linear(192, 64),
+                        nn.Linear(embed_dim, 64),
                         nn.ReLU(inplace=True),
                         nn.Linear(64, 1),
                     ).to(self.device)
         
-        self.wp_predictor = GRUWaypointsPredictor(192, waypoints=config.pred_len).to(self.device)
+        self.wp_predictor = GRUWaypointsPredictor(embed_dim, waypoints=config.pred_len).to(self.device)
         self.neck = nn.Sequential(
-                nn.Linear(192, 256),
+                nn.Linear(embed_dim, 256),
                 nn.ReLU(inplace=True),
             ).to(self.device)
         
